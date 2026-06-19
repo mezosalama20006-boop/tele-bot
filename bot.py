@@ -96,6 +96,22 @@ async def notify_admin_order(context, user, product_name, quantity, user_input=N
         except Exception as e:
             logger.error(f"Failed to notify admin {admin_id}: {e}")
 
+async def notify_admin_speed_request(context, user, purchase_id, product_name, quantity):
+    text = (
+        f"🚀 *طلب تسريع جديد*\n"
+        f"👤 {user.first_name} (@{user.username or 'N/A'})\n"
+        f"🆔 `{user.id}`\n"
+        f"🔢 الطلب: *#{purchase_id}*\n"
+        f"📦 الخدمة: *{product_name}*\n"
+        f"🔢 الكمية: *{quantity}*\n"
+        f"📌 هذه الخدمة طلبت تسريعًا من المستخدم"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=text, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Failed to notify admin {admin_id}: {e}")
+
 def admin_panel_keyboard():
     return InlineKeyboardMarkup([
         [
@@ -107,7 +123,10 @@ def admin_panel_keyboard():
             InlineKeyboardButton("� المستخدمين", callback_data="admin_users")
         ],
         [
-            InlineKeyboardButton("💳 الإيداعات", callback_data="admin_deposits"),
+            InlineKeyboardButton("� تسريعات", callback_data="admin_speed_requests"),
+            InlineKeyboardButton("💳 الإيداعات", callback_data="admin_deposits")
+        ],
+        [
             InlineKeyboardButton("📊 إحصائيات", callback_data="admin_stats")
         ],
         [
@@ -719,7 +738,21 @@ async def receive_purchase_input(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data.pop('pending_input_order_id', None)
             context.user_data.pop('state', None)
             await update.message.reply_text("✅ تم إرفاق الرابط/الحساب إلى طلبك.", parse_mode='Markdown')
-            # notify admins about new user input for order
+            try:
+                await notify_admin_order(context, update.effective_user, "(تحديث رابط/حساب)", 1, user_input)
+            except:
+                pass
+            return
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل: {e}")
+            return
+    pending_purchase_input = context.user_data.get('pending_purchase_input_id')
+    if pending_purchase_input:
+        try:
+            db.set_purchase_user_input(pending_purchase_input, user_input)
+            context.user_data.pop('pending_purchase_input_id', None)
+            context.user_data.pop('state', None)
+            await update.message.reply_text("✅ تم إرفاق الرابط/الحساب إلى طلبك.", parse_mode='Markdown')
             try:
                 await notify_admin_order(context, update.effective_user, "(تحديث رابط/حساب)", 1, user_input)
             except:
@@ -793,23 +826,73 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    orders  = db.get_user_orders(user_id)
-    if not orders:
+    purchases = db.get_user_purchases(user_id)
+    if not purchases:
         text = "📋 *طلباتي*\n\n_لم تقم بأي عمليات شراء بعد._"
     else:
         text = "📋 *طلباتي*\n━━━━━━━━━━━━━━━━━━\n"
         keyboard = []
-        for o in orders:
-            text += f"\n🛒 *{o['product_name']}* — ${o['price']:.2f}\n"
-            text += f"   📅 {o['date']}\n"
-            if o.get('content'):
-                text += f"   🎁 `{o['content'][:40]}...`\n"
-            prod = db.get_product(o['product_id'])
-            # if product requires input and user hasn't provided it, offer button to add
-            if prod and prod.get('requires_input') and not o.get('user_input'):
-                keyboard.append([InlineKeyboardButton(f"أضف رابط/حساب لـ {o['product_name']}", callback_data=f"add_order_input_{o['id']}")])
+        for p in purchases:
+            text += f"\n🛒 *{p['product_name']}* — ${p['total_price']:.2f}\n"
+            text += f"   📅 {p['date']}\n"
+            text += f"   📦 الكمية: *{p['quantity']}*\n"
+            status_label = {
+                'pending': 'قيد المعالجة',
+                'in_progress': 'قيد التنفيذ',
+                'completed': 'اكتملت',
+                'failed': 'فشلت',
+                'rejected': 'فشلت'
+            }.get(p.get('status','pending'), p.get('status','pending'))
+            text += f"   📊 الحالة: *{status_label}*"
+            if p.get('speed_status') and p['speed_status'] != 'none':
+                text += f" — *🚀 تم تقديم طلب تسريع*"
+            text += "\n"
+            if p.get('user_input'):
+                text += f"   📎 الرابط/الحساب المرسل: `{p['user_input']}`\n"
+            if p.get('speed_status') == 'none' and p.get('status') not in ['completed', 'failed', 'rejected']:
+                keyboard.append([InlineKeyboardButton("🚀 طلب تسريع الخدمة", callback_data=f"request_speed_{p['id']}")])
+            if p.get('requires_input') and not p.get('user_input'):
+                keyboard.append([InlineKeyboardButton(f"أضف رابط/حساب لطلب #{p['id']}", callback_data=f"add_purchase_input_{p['id']}")])
         keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")])
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def request_speed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    purchase_id = int(query.data.split("_")[-1])
+    purchase = db.get_purchase(purchase_id)
+    if not purchase or purchase['user_id'] != query.from_user.id:
+        await query.answer("الطلب غير موجود أو غير مسموح.", show_alert=True)
+        return
+    if purchase.get('speed_status') != 'none':
+        await query.answer("تم تقديم طلب تسريع لهذا الطلب بالفعل.", show_alert=True)
+        return
+    if purchase.get('status') == 'completed':
+        await query.answer("لا يمكن طلب تسريع لطلب مكتمل.", show_alert=True)
+        return
+    db.set_purchase_speed_status(purchase_id, 'pending')
+    await notify_admin_speed_request(context, query.from_user, purchase_id, purchase.get('product_name'), purchase.get('quantity'))
+    await query.edit_message_text(
+        f"✅ تم تقديم طلب التسريع للطلب #{purchase_id}.\n"
+        f"سيظهر للادمن لمتابعة الطلب فقط.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="my_orders")]])
+    )
+
+async def start_add_purchase_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    purchase_id = int(query.data.split("_")[-1])
+    purchase = db.get_purchase(purchase_id)
+    if not purchase or purchase['user_id'] != query.from_user.id:
+        await query.answer("الطلب غير موجود أو غير مسموح.", show_alert=True)
+        return
+    context.user_data['pending_purchase_input_id'] = purchase_id
+    context.user_data['state'] = WAITING_PURCHASE_INPUT
+    await query.edit_message_text(
+        "📎 أرسل الرابط أو الحساب المطلوب لهذا الطلب:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="my_orders")]])
+    )
 
 # ══════════════════════════════════════════════════════════
 # HELP
@@ -846,7 +929,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🗃️ المخزون: *{stats['total_items']}*\n"
         f"🛒 الطلبات: *{stats['orders']}*\n"
         f"💰 الإيرادات: *${stats['revenue']:.2f}*\n"
-        f"⏳ إيداعات معلقة: *{stats['pending_deposits']}*"
+        f"⏳ إيداعات معلقة: *{stats['pending_deposits']}*\n"
+        f"🚀 تسريعات معلقة: *{stats.get('pending_speed_requests', 0)}*"
     )
     try:
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=admin_panel_keyboard())
@@ -857,6 +941,116 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
+
+async def admin_speed_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    requests = db.get_speed_requests(limit=20, offset=0)
+    if not requests:
+        await query.edit_message_text(
+            "🚀 *طلبات التسريع المعلقة*\n\n_لا توجد طلبات تسريع حالياً._",
+            parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]))
+        return
+
+    text = "🚀 *طلبات التسريع المعلقة*\n━━━━━━━━━━━━━━━━━━\n"
+    keyboard = []
+    for r in requests:
+        text += (
+            f"\n🔢 #{r['id']} — *{r['product_name']}*\n"
+            f"👤 {r.get('user_name') or 'N/A'} (@{r.get('username') or 'N/A'}) — 🆔 `{r['user_id']}`\n"
+            f"🔢 الكمية: *{r.get('quantity')}*\n"
+            f"📅 التاريخ: {r.get('date')}\n"
+            f"📊 حالة الطلب: *{r.get('status','pending').upper()}*\n"
+            f"🚀 الحالة: *تم تقديم طلب تسريع*\n"
+        )
+        keyboard.append([InlineKeyboardButton(f"🔎 تفاصيل #{r['id']}", callback_data=f"speed_request_detail_{r['id']}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")])
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def approve_speed_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    purchase_id = int(query.data.split("_")[-1])
+    purchase = db.get_purchase(purchase_id)
+    if not purchase:
+        await query.answer("الطلب غير موجود!", show_alert=True)
+        return
+    if purchase.get('speed_status') != 'pending':
+        await query.answer("لا يوجد طلب تسريع معلق لهذا الطلب.", show_alert=True)
+        return
+    db.set_purchase_speed_status(purchase_id, 'approved')
+    try:
+        await context.bot.send_message(
+            chat_id=purchase['user_id'],
+            text=(
+                f"✅ تم قبول طلب التسريع للطلب #{purchase_id}.\n"
+                f"📦 الخدمة: *{purchase.get('product_name')}*\n"
+                f"🔢 الكمية: *{purchase.get('quantity')}*\n"
+                "سيقوم فريق الإدارة بمتابعة الطلب بشكل أسرع."
+            ),
+            parse_mode='Markdown'
+        )
+    except Exception:
+        pass
+    await query.answer("تم قبول طلب التسريع.", show_alert=True)
+    query.data = "admin_speed_requests"
+    await admin_speed_requests(update, context)
+
+async def reject_speed_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    purchase_id = int(query.data.split("_")[-1])
+    purchase = db.get_purchase(purchase_id)
+    if not purchase:
+        await query.answer("الطلب غير موجود!", show_alert=True)
+        return
+    if purchase.get('speed_status') != 'pending':
+        await query.answer("لا يوجد طلب تسريع معلق لهذا الطلب.", show_alert=True)
+        return
+    db.set_purchase_speed_status(purchase_id, 'requested')
+    await query.answer("تم تسجيل طلب التسريع.", show_alert=True)
+    query.data = "admin_speed_requests"
+    await admin_speed_requests(update, context)
+
+async def speed_request_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    purchase_id = int(query.data.split("_")[-1])
+    purchase = db.get_purchase(purchase_id)
+    if not purchase:
+        await query.answer("الطلب غير موجود!", show_alert=True)
+        return
+    speed_status = purchase.get('speed_status', 'none')
+    speed_label = {
+        'pending': '🚀 تم تقديم طلب تسريع',
+        'requested': '🚀 تم تقديم طلب تسريع',
+        'approved': '🚀 تم تقديم طلب تسريع',
+        'rejected': '🚀 تم تقديم طلب تسريع'
+    }.get(speed_status, '')
+    text = (
+        f"🔎 *تفاصيل طلب التسريع #{purchase_id}*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 المستخدم: {purchase.get('user_name')} (@{purchase.get('username') or 'N/A'}) — 🆔 `{purchase.get('user_id')}`\n"
+        f"📦 الخدمة: *{purchase.get('product_name')}*\n"
+        f"🔢 الكمية: *{purchase.get('quantity')}*\n"
+        f"📅 التاريخ: {purchase.get('date')}\n"
+        f"📎 الرابط/الحساب المرسل: `{purchase.get('user_input') or '_لم يرسل بعد_'}`\n"
+        f"📊 حالة الطلب: *{purchase.get('status', 'pending').upper()}*\n"
+        f"🚀 حالة التسريع: *{speed_label}*\n"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_speed_requests")]
+    ])
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=kb)
 
 # ══════════════════════════════════════════════════════════
 # ADMIN — CATEGORIES MANAGEMENT
@@ -1592,6 +1786,67 @@ async def execute_reject_purchase(update: Update, context: ContextTypes.DEFAULT_
     await admin_orders(update, context)
 
 
+async def admin_set_purchase_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    parts = query.data.split("_")
+    if len(parts) < 4:
+        await query.answer("تنسيق غير صالح.", show_alert=True)
+        return
+    status = parts[3]
+    purchase_id = int(parts[4]) if len(parts) > 4 else None
+    if not purchase_id:
+        await query.answer("الطلب غير موجود.", show_alert=True)
+        return
+    purchase = db.get_purchase(purchase_id)
+    if not purchase:
+        await query.answer("الطلب غير موجود!", show_alert=True)
+        return
+    valid_status = {
+        'pending': 'قيد المعالجة',
+        'in_progress': 'قيد التنفيذ',
+        'completed': 'اكتملت',
+        'failed': 'فشلت'
+    }
+    if status not in valid_status:
+        await query.answer("الحالة غير مدعومة.", show_alert=True)
+        return
+    if purchase.get('status') == status:
+        await query.answer(f"الحالة بالفعل {valid_status[status]}.", show_alert=True)
+        return
+    db.set_purchase_status(purchase_id, status)
+    if status in ['completed', 'failed']:
+        db.set_orders_status_by_purchase(purchase_id, status)
+    user_message = None
+    if status == 'pending':
+        user_message = "✅ تم تحديث حالة طلبك إلى *قيد المعالجة*."
+    elif status == 'in_progress':
+        user_message = "✅ طلبك الآن *قيد التنفيذ* من قِبل الإدارة."
+    elif status == 'completed':
+        user_message = (
+            f"✅ تم إتمام طلبك #{purchase_id} بنجاح!\n"
+            f"📦 الخدمة: *{purchase.get('product_name')}*\n"
+            f"🔢 الكمية: *{purchase.get('quantity')}*"
+        )
+    elif status == 'failed':
+        user_message = (
+            f"❌ تم تحديث حالة طلبك #{purchase_id} إلى *فشلت*.")
+    if user_message:
+        try:
+            await context.bot.send_message(
+                chat_id=purchase['user_id'],
+                text=user_message,
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass
+    await query.answer(f"تم تغيير حالة الطلب إلى {valid_status[status]}.", show_alert=True)
+    query.data = f"order_detail_{purchase_id}"
+    await order_detail(update, context)
+
+
 async def order_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1603,6 +1858,14 @@ async def order_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not purchase:
         await query.answer("الطلب غير موجود!", show_alert=True)
         return
+    speed_status = purchase.get('speed_status', 'none')
+    speed_label = ''
+    if speed_status != 'none':
+        speed_label = {
+            'pending': '🚀 طلب تسريع معلق',
+            'approved': '🚀 التسريع موافق عليه',
+            'rejected': '🚀 تم رفض طلب التسريع'
+        }.get(speed_status, speed_status)
     text = (
         f"🔎 *تفاصيل الطلب #{purchase_id}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -1613,6 +1876,7 @@ async def order_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📅 التاريخ: {purchase.get('date')}\n"
         f"📎 الرابط/الحساب المرسل:\n`{purchase.get('user_input') or '_لم يرسل بعد_'}`\n"
         f"📊 الحالة: *{purchase.get('status', 'pending').upper()}*\n"
+        f"{(f'🚀 {speed_label}\n' if speed_label else '')}"
     )
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_orders_1")]])
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=kb)
@@ -1853,6 +2117,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "admin_deposits":     admin_deposits,
         "admin_users":        admin_users,
         "admin_stats":        admin_stats,
+        "admin_speed_requests": admin_speed_requests,
         "admin_add_category": start_add_category,
     }
     if data in routes:
@@ -1873,6 +2138,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = data.split("_")
         order_id = int(parts[3]) if len(parts) > 3 else int(parts[-1])
         await start_add_order_input(update, context, order_id)
+    elif data.startswith("add_purchase_input_"):
+        await start_add_purchase_input(update, context)
+    elif data.startswith("request_speed_"):
+        await request_speed(update, context)
+    elif data.startswith("speed_request_detail_"):
+        await speed_request_detail(update, context)
+    elif data.startswith("admin_set_status_"):
+        await admin_set_purchase_status(update, context)
     elif data.startswith("confirmbuy_"):    await confirm_buy(update, context)
 
     elif data.startswith("complete_order_"): await complete_order(update, context)
