@@ -970,54 +970,7 @@ async def admin_speed_requests(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")])
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def approve_speed_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id):
-        return
-    purchase_id = int(query.data.split("_")[-1])
-    purchase = db.get_purchase(purchase_id)
-    if not purchase:
-        await query.answer("الطلب غير موجود!", show_alert=True)
-        return
-    if purchase.get('speed_status') != 'pending':
-        await query.answer("لا يوجد طلب تسريع معلق لهذا الطلب.", show_alert=True)
-        return
-    db.set_purchase_speed_status(purchase_id, 'approved')
-    try:
-        await context.bot.send_message(
-            chat_id=purchase['user_id'],
-            text=(
-                f"✅ تم قبول طلب التسريع للطلب #{purchase_id}.\n"
-                f"📦 الخدمة: *{purchase.get('product_name')}*\n"
-                f"🔢 الكمية: *{purchase.get('quantity')}*\n"
-                "سيقوم فريق الإدارة بمتابعة الطلب بشكل أسرع."
-            ),
-            parse_mode='Markdown'
-        )
-    except Exception:
-        pass
-    await query.answer("تم قبول طلب التسريع.", show_alert=True)
-    query.data = "admin_speed_requests"
-    await admin_speed_requests(update, context)
 
-async def reject_speed_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id):
-        return
-    purchase_id = int(query.data.split("_")[-1])
-    purchase = db.get_purchase(purchase_id)
-    if not purchase:
-        await query.answer("الطلب غير موجود!", show_alert=True)
-        return
-    if purchase.get('speed_status') != 'pending':
-        await query.answer("لا يوجد طلب تسريع معلق لهذا الطلب.", show_alert=True)
-        return
-    db.set_purchase_speed_status(purchase_id, 'requested')
-    await query.answer("تم تسجيل طلب التسريع.", show_alert=True)
-    query.data = "admin_speed_requests"
-    await admin_speed_requests(update, context)
 
 async def speed_request_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1876,8 +1829,10 @@ async def order_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📅 التاريخ: {purchase.get('date')}\n"
         f"📎 الرابط/الحساب المرسل:\n`{purchase.get('user_input') or '_لم يرسل بعد_'}`\n"
         f"📊 الحالة: *{purchase.get('status', 'pending').upper()}*\n"
-        f"{(f'🚀 {speed_label}\n' if speed_label else '')}"
     )
+    # append speed label separately to avoid backslash inside f-string expression
+    if speed_label:
+        text += f"🚀 {speed_label}\n"
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_orders_1")]])
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=kb)
 # ADMIN — USERS
