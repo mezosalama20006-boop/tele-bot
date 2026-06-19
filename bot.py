@@ -1778,8 +1778,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════
-print(Application)
-print(type(Application))
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
