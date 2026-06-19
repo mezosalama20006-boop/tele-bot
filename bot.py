@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from database import Database
-from config import BOT_TOKEN, ADMIN_IDS, EGP_EXCHANGE_RATE
+from config import BOT_TOKEN, ADMIN_IDS, EGP_EXCHANGE_RATE, DATABASE_PATH
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - message)s',
@@ -21,7 +21,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-db = Database()
+db = Database(DATABASE_PATH)
 
 
 # ── States ─────────────────────────────────────────────────
@@ -41,6 +41,8 @@ WAITING_PURCHASE_QUANTITY   = 13
 WAITING_PRODUCT_TYPE         = 14
 WAITING_PRODUCT_INPUT_PROMPT = 15
 WAITING_PURCHASE_INPUT       = 16
+WAITING_ADMIN_BALANCE_EDIT   = 17
+
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS
@@ -1624,12 +1626,98 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     users = db.get_all_users()
     text  = f"👥 *كل المستخدمين ({len(users)})*\n━━━━━━━━━━━━━━━━━━\n\n"
+    keyboard = []
     for user in users[:20]:
         text += f"👤 {user['name']} — 💰 ${user['balance']:.2f}\n"
+        keyboard.append([InlineKeyboardButton(f"{user['name']} — ${user['balance']:.2f}", callback_data=f"admin_view_user_{user['id']}")])
     if len(users) > 20:
         text += f"\n_... و {len(users)-20} أكثر_"
-    await query.edit_message_text(text, parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]))
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")])
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_view_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    parts = query.data.split("_")
+    if len(parts) < 4:
+        await query.answer("المستخدم غير موجود!", show_alert=True)
+        return
+    user_id = int(parts[3])
+    user = db.get_user(user_id)
+    if not user:
+        await query.answer("المستخدم غير موجود!", show_alert=True)
+        return
+    text = (
+        f"👤 *بيانات المستخدم*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"اسم: *{user['name']}*\n"
+        f"معرّف: `{user['id']}`\n"
+        f"اسم المستخدم: @{user['username'] or 'N/A'}\n"
+        f"💰 الرصيد: *${user['balance']:.2f}*\n"
+        f"📅 أنشئ في: {user['created_at']}\n"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🧹 صفّر الرصيد", callback_data=f"admin_reset_user_balance_{user_id}"),
+         InlineKeyboardButton("✏️ عدّل الرصيد", callback_data=f"admin_edit_user_balance_{user_id}")],
+        [InlineKeyboardButton("🗑️ احذف المستخدم", callback_data=f"admin_delete_user_{user_id}" )],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")]
+    ]
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_reset_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    user_id = int(query.data.split("_")[4])
+    user = db.get_user(user_id)
+    if not user:
+        await query.answer("المستخدم غير موجود!", show_alert=True)
+        return
+    db.set_user_balance(user_id, 0)
+    await query.edit_message_text(
+        f"✅ تم تصفير رصيد المستخدم *{user['name']}*\n"
+        f"الرصيد الآن: *$0.00*",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data=f"admin_view_user_{user_id}")]])
+    )
+
+async def admin_edit_user_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    user_id = int(query.data.split("_")[4])
+    user = db.get_user(user_id)
+    if not user:
+        await query.answer("المستخدم غير موجود!", show_alert=True)
+        return
+    context.user_data['pending_admin_balance_user'] = user_id
+    context.user_data['state'] = WAITING_ADMIN_BALANCE_EDIT
+    await query.edit_message_text(
+        f"✏️ أدخل الرصيد الجديد للمستخدم *{user['name']}* (حاليًا ${user['balance']:.2f}):",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_view_user_{user_id}")]])
+    )
+
+async def admin_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    user_id = int(query.data.split("_")[3])
+    user = db.get_user(user_id)
+    if not user:
+        await query.answer("المستخدم غير موجود!", show_alert=True)
+        return
+    db.delete_user(user_id)
+    await query.edit_message_text(
+        f"✅ تم حذف المستخدم *{user['name']}* وجميع بياناته.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="admin_users")]])
+    )
 
 # ══════════════════════════════════════════════════════════
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1686,6 +1774,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await receive_broadcast_message(update, context)
     elif state == WAITING_PAYMENT_PROOF:
         await update.message.reply_text("📸 أرسل *صورة* الإيصال.", parse_mode='Markdown')
+    elif state == WAITING_ADMIN_BALANCE_EDIT:
+        try:
+            new_balance = float(update.message.text.replace(',', '.'))
+            user_id = context.user_data.get('pending_admin_balance_user')
+            if user_id is None:
+                await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
+                return
+            db.set_user_balance(user_id, new_balance)
+            context.user_data.pop('state', None)
+            context.user_data.pop('pending_admin_balance_user', None)
+            await update.message.reply_text(
+                f"✅ تم تحديث رصيد المستخدم إلى ${new_balance:.2f}.",
+                parse_mode='Markdown'
+            )
+        except ValueError:
+            await update.message.reply_text("❌ أدخل رقماً صحيحاً للمبلغ.")
     elif state == WAITING_ADD_BALANCE_AMOUNT:
         try:
             amount     = float(update.message.text)
@@ -1793,6 +1897,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("admin_additem_"): await start_add_item(update, context)
     elif data.startswith("admin_mgitems_"): await manage_items(update, context)
     elif data.startswith("admin_delitem_"): await delete_item(update, context)
+    elif data.startswith("admin_view_user_"): await admin_view_user(update, context)
+    elif data.startswith("admin_reset_user_balance_"): await admin_reset_user_balance(update, context)
+    elif data.startswith("admin_edit_user_balance_"): await admin_edit_user_balance(update, context)
+    elif data.startswith("admin_delete_user_"): await admin_delete_user(update, context)
     elif data == "admin_broadcast":
       await start_broadcast(update, context)
     elif data.startswith("admin_orders"):    await admin_orders(update, context)
