@@ -121,10 +121,14 @@ class Database:
             total_price REAL NOT NULL,
             user_input TEXT,
             status TEXT DEFAULT 'pending',
+            speed_status TEXT DEFAULT 'none',
             date TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (product_id) REFERENCES products(id)
         )''')
+        existing_purchases_columns = [row['name'] for row in c.execute("PRAGMA table_info(purchases)").fetchall()]
+        if 'speed_status' not in existing_purchases_columns:
+            c.execute("ALTER TABLE purchases ADD COLUMN speed_status TEXT DEFAULT 'none'")
         # add purchase_id to orders if missing
         if 'purchase_id' not in existing_orders_columns:
             c.execute("ALTER TABLE orders ADD COLUMN purchase_id INTEGER")
@@ -497,6 +501,45 @@ class Database:
         result['items'] = [dict(i) for i in items]
         return result
 
+    def get_user_purchases(self, user_id):
+        conn = self.get_conn()
+        rows = conn.execute("""
+            SELECT p.*, u.username, u.name as user_name, prod.name as product_name,
+                   prod.requires_input, app.name as app_name, cat.name as category_name
+            FROM purchases p
+            JOIN users u ON p.user_id = u.id
+            JOIN products prod ON p.product_id = prod.id
+            JOIN apps app ON prod.app_id = app.id
+            JOIN categories cat ON app.category_id = cat.id
+            WHERE p.user_id=?
+            ORDER BY p.date DESC
+        """, (user_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_speed_requests(self, limit=100, offset=0):
+        conn = self.get_conn()
+        rows = conn.execute("""
+            SELECT p.*, u.username, u.name as user_name, prod.name as product_name,
+                   app.name as app_name, cat.name as category_name
+            FROM purchases p
+            JOIN users u ON p.user_id = u.id
+            JOIN products prod ON p.product_id = prod.id
+            JOIN apps app ON prod.app_id = app.id
+            JOIN categories cat ON app.category_id = cat.id
+            WHERE p.speed_status='pending'
+            ORDER BY p.date DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def set_purchase_speed_status(self, purchase_id, status):
+        conn = self.get_conn()
+        conn.execute("UPDATE purchases SET speed_status=? WHERE id=?", (status, purchase_id))
+        conn.commit()
+        conn.close()
+
     def set_purchase_status(self, purchase_id, status):
         conn = self.get_conn()
         conn.execute("UPDATE purchases SET status=? WHERE id=?", (status, purchase_id))
@@ -643,6 +686,7 @@ class Database:
         orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
         revenue = conn.execute("SELECT COALESCE(SUM(price),0) FROM orders").fetchone()[0]
         pending = conn.execute("SELECT COUNT(*) FROM deposits WHERE status='pending'").fetchone()[0]
+        pending_speed = conn.execute("SELECT COUNT(*) FROM purchases WHERE speed_status='pending'").fetchone()[0]
         conn.close()
         return {
             'users': users,
@@ -652,5 +696,6 @@ class Database:
             'total_items': total_items,
             'orders': orders,
             'revenue': revenue,
-            'pending_deposits': pending
+            'pending_deposits': pending,
+            'pending_speed_requests': pending_speed
         }
