@@ -640,7 +640,9 @@ async def add_balance_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Binance: `1199904304`\n"
         "• Vodafone Cash: `01028749936`\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        " 💵 * سعر الدولار مقابل الجنيه المصري =55ج الخطوة 1:* أدخل *المبلغ* الذي أرسلته (مثال: `25`):"
+        " 💵 * سعر الدولار مقابل الجنيه المصري =55ج الخطوة 1: 
+        
+        * أدخل *المبلغ* الذي أرسلته (مثال: ` 1` بالدولار ) ي: "
     )
     await query.edit_message_text(text, parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")]]))
