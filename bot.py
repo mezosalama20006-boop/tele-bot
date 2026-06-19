@@ -634,18 +634,32 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_balance_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     text = (
-        "➕ *شحن الرصيد*\n━━━━━━━━━━━━━━━━━━\n\n"
-        "💳 *طرق الدفع:*\n"
+        "➕ *شحن الرصيد*\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "💳 *طرق الدفع المتاحة:*\n"
         "• Binance: `1199904304`\n"
-        "• Vodafone Cash: `01028749936`\n"
+        "• Vodafone Cash: `01028749936`\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        " 💵 * سعر الدولار مقابل الجنيه المصري =55ج الخطوة 1: 
-        
-        * أدخل *المبلغ* الذي أرسلته (مثال: ` 1` بالدولار ) ي: "
+        "💵 *سعر التحويل:* 1 دولار = 55 جنيه مصري\n\n"
+        "📌 *طريقة الشحن:*\n"
+        "1- حوّل المبلغ المطلوب على أي وسيلة من وسائل الدفع\n"
+        "2- بعد التحويل اكتب هنا المبلغ بالدولار الذي أرسلته\n\n"
+        "📥 *مثال:*\n"
+        "لو حولت 55 جنيه → اكتب: `1`\n"
+        "لو حولت 110 جنيه → اكتب: `2`\n\n"
+        "✍️ من فضلك أدخل المبلغ بالدولار الآن:"
     )
-    await query.edit_message_text(text, parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")]]))
+
+    await query.edit_message_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")]
+        ])
+    )
+
     context.user_data['state'] = WAITING_PAYMENT_AMOUNT
     return WAITING_PAYMENT_AMOUNT
 
