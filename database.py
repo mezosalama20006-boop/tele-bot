@@ -155,6 +155,28 @@ class Database:
         conn.close()
         return [dict(r) for r in rows]
 
+    def get_user(self, user_id):
+        conn = self.get_conn()
+        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def set_user_balance(self, user_id, balance):
+        conn = self.get_conn()
+        conn.execute("UPDATE users SET balance=? WHERE id=?", (balance, user_id))
+        conn.commit()
+        conn.close()
+
+    def delete_user(self, user_id):
+        conn = self.get_conn()
+        conn.execute("DELETE FROM transactions WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM deposits WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM orders WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM purchases WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        conn.commit()
+        conn.close()
+
     def get_transactions(self, user_id, limit=10):
         conn = self.get_conn()
         rows = conn.execute(
