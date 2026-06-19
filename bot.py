@@ -3,10 +3,6 @@ import asyncio
 
 
 # ── Fix for asyncio loop issues (Python 3.14) ──
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.error import BadRequest
