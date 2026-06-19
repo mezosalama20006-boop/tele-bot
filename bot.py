@@ -532,7 +532,8 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cat_id     = int(parts[3])
     product = db.get_product(product_id)
     balance = db.get_balance(query.from_user.id)
-    max_qty = int(balance // product['price']) if product['stock'] < 0 else product['stock']
+    affordable_qty = int(balance // product['price'])
+    max_qty = affordable_qty if product['stock'] < 0 else min(product['stock'], affordable_qty)
     context.user_data['pending_purchase'] = {
         'product_id': product_id,
         'app_id': app_id,
@@ -576,6 +577,12 @@ async def receive_purchase_quantity(update: Update, context: ContextTypes.DEFAUL
         data['user_input'] = None
         data['input_required'] = True
         data['input_prompt'] = product.get('input_prompt') or 'أرسل الرابط أو الحساب المطلوب هنا:'
+        context.user_data['pending_purchase_data'] = {
+            'product_id': data['product_id'],
+            'quantity': quantity,
+            'app_id': data['app_id'],
+            'cat_id': data['cat_id']
+        }
         context.user_data['state'] = WAITING_PURCHASE_INPUT
         await update.message.reply_text(
             f"📎 *هذه الخدمة تطلب رابط أو حساب قبل إتمام الشراء.*\n\n"
