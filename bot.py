@@ -648,7 +648,7 @@ async def receive_purchase_quantity(update: Update, context: ContextTypes.DEFAUL
         }
         context.user_data['state'] = WAITING_PURCHASE_INPUT
         await update.message.reply_text(
-            f"📎 *هذه الخدمة تطلب رابط أو حساب قبل إتمام الشراء.*\n\n"
+            f"📎 *  , هذه الخدمة تطلب رابط أو حساب قبل إتمام الشراء .وبعد اختيار الكميه سيتم تأكيد الشراء تلقائي.*\n\n"
             f"📦 المنتج: *{product['name']}*\n"
             f"🔢 الكمية: *{quantity}*\n"
             f"{format_price_summary(product['price'], quantity)}\n\n"
