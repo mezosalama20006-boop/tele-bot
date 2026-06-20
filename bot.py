@@ -244,9 +244,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if update.message:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=persistent_keyboard())
+        await update.message.reply_text("📋 *القائمة الرئيسية*", parse_mode='Markdown',
+                                        reply_markup=main_menu_keyboard(user.id))
     else:
         await update.callback_query.edit_message_text(text, parse_mode='Markdown',
-                                                      reply_markup=persistent_keyboard())
+                                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
+        await update.callback_query.message.reply_text("📋 *القائمة الرئيسية*", parse_mode='Markdown',
+                                                       reply_markup=main_menu_keyboard(user.id))
 
 # ══════════════════════════════════════════════════════════
 # HANDLE MAIN MENU TEXT BUTTONS
