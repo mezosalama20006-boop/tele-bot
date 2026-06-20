@@ -784,81 +784,96 @@ async def receive_purchase_input(update: Update, context: ContextTypes.DEFAULT_T
     # two modes: after user sends link for post-purchase input, or attaching to existing order
     if context.user_data.get('state') != WAITING_PURCHASE_INPUT:
         return
+
     user_input = update.message.text.strip()
     if not user_input:
         await update.message.reply_text("❌ أرسل الرابط أو الحساب المطلوب.")
         return
-    
+
     # if creating purchase now (user sent link after payment confirmation)
     pending_data = context.user_data.get('pending_purchase_data')
+
     if pending_data:
         product_id = pending_data['product_id']
         quantity = pending_data['quantity']
         user_id = update.effective_user.id
         product = db.get_product(product_id)
-        
-        # NOW purchase the product with the link
-        success, result = db.purchase_product(user_id, product_id, quantity, user_input)
+
+        # ❌ لا يتم شراء مباشر — فقط تجهيز التأكيد
+        context.user_data.setdefault('pending_purchase', {})
+        context.user_data['pending_purchase']['user_input'] = user_input
+
         context.user_data.pop('pending_purchase_data', None)
         context.user_data.pop('state', None)
-        
-        if success:
-            # notify admin about the new order with link
-            await notify_admin_order(context, update.effective_user, result['product_name'], quantity, user_input, price=product['price'] if product else None)
-            await update.message.reply_text(
-                f"✅ تم إرسال الرابط بنجاح!\n\n"
-                f"🔢 رقم الطلب: #{result.get('purchase_id')}\n"
-                f"📦 المنتج: *{result['product_name']}*\n"
-                f"🔢 الكمية: *{quantity}*\n"
-                f"💵 الرصيد المتبقي: *${result['new_balance']:.2f}*\n\n"
-                f"سيتم معالجة طلبك من قبل الإدارة.",
-                parse_mode='Markdown',
-                reply_markup=main_menu_keyboard(user_id))
-            return
-        else:
-            await update.message.reply_text(f"❌ فشل: {result}", parse_mode='Markdown')
-            return
-    
+
+        balance = db.get_balance(user_id)
+        total_price = product['price'] * quantity
+
+        await update.message.reply_text(
+            f"📎 الرابط: `{user_input}`\n\n"
+            f"📦 المنتج: *{product['name']}*\n"
+            f"🔢 الكمية: *{quantity}*\n"
+            f"💵 الإجمالي: *${total_price:.2f}*\n"
+            f"💼 رصيدك: *${balance:.2f}*\n\n"
+            f"اضغط الزر لتأكيد الشراء:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "✅ تأكيد",
+                        callback_data=f"confirmbuy_{product_id}_{pending_data['app_id']}_{pending_data['cat_id']}_{quantity}"
+                    ),
+                    InlineKeyboardButton(
+                        "❌ إلغاء",
+                        callback_data=f"app_{pending_data['app_id']}_{pending_data['cat_id']}"
+                    )
+                ]
+            ])
+        )
+        return
+
     # if adding input to existing order (from my_orders)
-   # if creating purchase now (user sent link before final confirmation)
-pending_data = context.user_data.get('pending_purchase_data')
-if pending_data:
-    product_id = pending_data['product_id']
-    quantity = pending_data['quantity']
-    product = db.get_product(product_id)
-    balance = db.get_balance(update.effective_user.id)
+    pending_order = context.user_data.get('pending_input_order_id')
 
-    # حفظ الرابط فقط بدون تنفيذ الشراء
-    context.user_data['pending_purchase']['user_input'] = user_input
+    if pending_order:
+        try:
+            db.set_order_user_input(pending_order, user_input)
+            context.user_data.pop('pending_input_order_id', None)
+            context.user_data.pop('state', None)
 
-    context.user_data.pop('pending_purchase_data', None)
-    context.user_data.pop('state', None)
+            await update.message.reply_text("✅ تم إرفاق الرابط/الحساب إلى طلبك.", parse_mode='Markdown')
 
-    total_price = product['price'] * quantity
+            try:
+                await notify_admin_order(context, update.effective_user, "(تحديث رابط/حساب)", 1, user_input)
+            except:
+                pass
 
-    await update.message.reply_text(
-        f"📎 الرابط: `{user_input}`\n\n"
-        f"📦 المنتج: *{product['name']}*\n"
-        f"🔢 الكمية: *{quantity}*\n"
-        f"💵 الإجمالي: *${total_price:.2f}*\n"
-        f"💼 رصيدك: *${balance:.2f}*\n\n"
-        f"اضغط الزر لتأكيد الشراء:",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "✅ تأكيد",
-                    callback_data=f"confirmbuy_{product_id}_{pending_data['app_id']}_{pending_data['cat_id']}_{quantity}"
-                ),
-                InlineKeyboardButton(
-                    "❌ إلغاء",
-                    callback_data=f"app_{pending_data['app_id']}_{pending_data['cat_id']}"
-                )
-            ]
-        ])
-    )
-    return
+            return
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل: {e}")
+            return
 
+    pending_purchase_input = context.user_data.get('pending_purchase_input_id')
+
+    if pending_purchase_input:
+        try:
+            db.set_purchase_user_input(pending_purchase_input, user_input)
+            context.user_data.pop('pending_purchase_input_id', None)
+            context.user_data.pop('state', None)
+
+            await update.message.reply_text("✅ تم إرفاق الرابط/الحساب إلى طلبك.", parse_mode='Markdown')
+
+            try:
+                await notify_admin_order(context, update.effective_user, "(تحديث رابط/حساب)", 1, user_input)
+            except:
+                pass
+
+            return
+        except Exception as e:
+            await update.message.reply_text(f"❌ فشل: {e}")
+            return
+
+    await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
 async def receive_payment_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = float(update.message.text.replace(',', '.'))
