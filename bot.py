@@ -1035,7 +1035,7 @@ async def show_help_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ℹ️ *المساعدة والدعم*\n━━━━━━━━━━━━━━━━━━\n\n"
         "🛍️ *كيف تشتري:*\n1. اذهب للمنتجات\n2. اختر الكاتيجري ثم التطبيق\n3. اختر الخدمة وأكد الشراء\n\n"
         "💰 *كيف تشحن الرصيد:*\n1. اذهب لـ شحن رصيد\n2. أرسل الدفع\n3. ارفع الإيصال\n4. انتظر الموافقة\n\n"
-        "📞 *تواصل مع الدعم:* `@MezoStoreeAdmin`",
+        "📞 *تواصل مع الدعم:* `@MezoStoreBotAdmin`",
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
 
