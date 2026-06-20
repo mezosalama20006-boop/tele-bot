@@ -50,7 +50,11 @@ def is_admin(user_id):
 # ── Keyboards ──────────────────────────────────────────────
 
 def persistent_keyboard():
-    return ReplyKeyboardMarkup([["/start"]], resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup([
+        ["🛍️ المنتجات", "💼 محفظتي"],
+        ["➕ شحن رصيد", "📋 طلباتي"],
+        ["ℹ️ مساعدة"]
+    ], resize_keyboard=True, is_persistent=True)
 
 def format_price_summary(price, quantity=1):
     total_price = price * quantity
@@ -240,25 +244,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if update.message:
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=persistent_keyboard())
-        await update.message.reply_text("📋 *القائمة الرئيسية*", parse_mode='Markdown',
-                                        reply_markup=main_menu_keyboard(user.id))
     else:
         await update.callback_query.edit_message_text(text, parse_mode='Markdown',
-                                                      reply_markup=main_menu_keyboard(user.id))
+                                                      reply_markup=persistent_keyboard())
+
+# ══════════════════════════════════════════════════════════
+# HANDLE MAIN MENU TEXT BUTTONS
+# ══════════════════════════════════════════════════════════
+
+async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == "🛍️ المنتجات":
+        await show_categories(update, context)
+    elif text == "💼 محفظتي":
+        await show_wallet_text(update, context)
+    elif text == "➕ شحن رصيد":
+        await add_balance_start_text(update, context)
+    elif text == "📋 طلباتي":
+        await show_orders_text(update, context)
+    elif text == "ℹ️ مساعدة":
+        await show_help_text(update, context)
 
 # ══════════════════════════════════════════════════════════
 # CATEGORIES (Level 1)
 # ══════════════════════════════════════════════════════════
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
     categories = db.get_all_categories()
     if not categories:
-        await query.edit_message_text(
-            "📂 *لا توجد كاتيجريز بعد.*",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "📂 *لا توجد كاتيجريز بعد.*",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
+        else:
+            await update.message.reply_text(
+                "📂 *لا توجد كاتيجريز بعد.*",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
         return
     keyboard = []
     for cat in categories:
@@ -267,11 +293,18 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"cat_{cat['id']}"
         )])
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")])
-    await query.edit_message_text(
-        "🛍️ *اختر الكاتيجري:*\n━━━━━━━━━━━━━━━━━━",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "🛍️ *اختر الكاتيجري:*\n━━━━━━━━━━━━━━━━━━",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            "🛍️ *اختر الكاتيجري:*\n━━━━━━━━━━━━━━━━━━",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 # ══════════════════════════════════════════════════════════
 # APPS (Level 2)
@@ -323,7 +356,11 @@ async def show_products_by_app(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = []
     for p in products:
         emoji = "🟢" if p['stock'] != 0 else "🔴"
-        stock_display = "♾️ لا محدود" if p['stock'] < 0 else str(p['stock']) + " متوفر"
+        # Show infinity symbol for products with infinite stock or that require input
+        if p.get('requires_input') or p['stock'] < 0:
+            stock_display = "♾️ لا محدود"
+        else:
+            stock_display = str(p['stock']) + " متوفر"
         keyboard.append([InlineKeyboardButton(
             f"{emoji} {p['name']} — ${p['price']:.2f} ({stock_display})",
             callback_data=f"product_{p['id']}_{app_id}_{cat_id}"
@@ -350,7 +387,8 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not product:
         await query.answer("المنتج غير موجود!", show_alert=True)
         return
-    if product['stock'] < 0:
+    # For products that require input or have infinite stock, show infinity symbol
+    if product.get('requires_input') or product['stock'] < 0:
         stock_text = "✅ متوفر ♾️ لا محدود"
     elif product['stock'] > 0:
         stock_text = f"✅ متوفر ({product['stock']} قطعة)"
@@ -426,7 +464,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'max_qty': max_qty
     }
 
-    available_text = "♾️ لا محدود" if product['stock'] < 0 else str(product['stock'])
+    available_text = "♾️ لا محدود" if (product.get('requires_input') or product['stock'] < 0) else str(product['stock'])
     msg_text = f"🛒 *اختر الكمية*\n\n"
     if product.get('requires_input'):
         msg_text += "⚠️ *ملاحظة مهمة:* هذه الخدمة بتطلب الرابط بتاعك بعد الشراء.\n\n"
@@ -562,7 +600,7 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'max_qty': max_qty
     }
     context.user_data['state'] = WAITING_PURCHASE_QUANTITY
-    available_text = "♾️ لا محدود" if product['stock'] < 0 else str(product['stock'])
+    available_text = "♾️ لا محدود" if (product.get('requires_input') or product['stock'] < 0) else str(product['stock'])
     await query.edit_message_text(
         f"📥 أدخل الكمية التي تريد شرائها:\n\n"
         f"📦 {product['name']}\n"
@@ -655,6 +693,24 @@ async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 رجوع",        callback_data="main_menu")]
     ]))
 
+async def show_wallet_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    balance      = db.get_balance(user_id)
+    transactions = db.get_transactions(user_id, limit=5)
+    text = f"💼 *محفظتي*\n━━━━━━━━━━━━━━━━━━\n💰 الرصيد: *${balance:.2f}*\n\n📋 *آخر المعاملات:*\n"
+    if transactions:
+        for t in transactions:
+            emoji = "➕" if t['type'] == 'deposit' else "🛒"
+            sign  = "+" if t['type'] == 'deposit' else "-"
+            text += f"{emoji} {sign}${abs(t['amount']):.2f} — {t['description']}\n"
+    else:
+        text += "_لا توجد معاملات بعد._"
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ شحن رصيد",   callback_data="add_balance")],
+        [InlineKeyboardButton("📋 كل الطلبات", callback_data="my_orders")],
+        [InlineKeyboardButton("🔙 رجوع",        callback_data="main_menu")]
+    ]))
+
 # ══════════════════════════════════════════════════════════
 # ADD BALANCE
 # ══════════════════════════════════════════════════════════
@@ -681,6 +737,35 @@ async def add_balance_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await query.edit_message_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")]
+        ])
+    )
+
+    context.user_data['state'] = WAITING_PAYMENT_AMOUNT
+    return WAITING_PAYMENT_AMOUNT
+
+async def add_balance_start_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "➕ *شحن الرصيد*\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "💳 *طرق الدفع المتاحة:*\n"
+        "• Binance: `1199904304`\n"
+        "• Vodafone Cash: `01028749936`\n\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "💵 *سعر التحويل:* 1 دولار = 55 جنيه مصري\n\n"
+        "📌 *طريقة الشحن:*\n"
+        "1- حوّل المبلغ المطلوب على أي وسيلة من وسائل الدفع\n"
+        "2- بعد التحويل اكتب هنا المبلغ بالدولار الذي أرسلته\n\n"
+        "📥 *مثال:*\n"
+        "لو حولت 55 جنيه → اكتب: `1`\n"
+        "لو حولت 110 جنيه → اكتب: `2`\n\n"
+        "✍️ من فضلك أدخل المبلغ بالدولار الآن:"
+    )
+
+    await update.message.reply_text(
         text,
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([
@@ -856,6 +941,38 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")])
         await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def show_orders_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    purchases = db.get_user_purchases(user_id)
+    if not purchases:
+        text = "📋 *طلباتي*\n\n_لم تقم بأي عمليات شراء بعد._"
+    else:
+        text = "📋 *طلباتي*\n━━━━━━━━━━━━━━━━━━\n"
+        keyboard = []
+        for p in purchases:
+            text += f"\n🛒 *{p['product_name']}* — ${p['total_price']:.2f}\n"
+            text += f"   📅 {p['date']}\n"
+            text += f"   📦 الكمية: *{p['quantity']}*\n"
+            status_label = {
+                'pending': 'قيد المعالجة',
+                'in_progress': 'قيد التنفيذ',
+                'completed': 'اكتملت',
+                'failed': 'فشلت',
+                'rejected': 'فشلت'
+            }.get(p.get('status','pending'), p.get('status','pending'))
+            text += f"   📊 الحالة: *{status_label}*"
+            if p.get('speed_status') and p['speed_status'] != 'none':
+                text += f" — *🚀 تم تقديم طلب تسريع*"
+            text += "\n"
+            if p.get('user_input'):
+                text += f"   📎 الرابط/الحساب المرسل: `{p['user_input']}`\n"
+            if p.get('speed_status') == 'none' and p.get('status') not in ['completed', 'failed', 'rejected']:
+                keyboard.append([InlineKeyboardButton("🚀 طلب تسريع الخدمة", callback_data=f"request_speed_{p['id']}")])
+            if p.get('requires_input') and not p.get('user_input'):
+                keyboard.append([InlineKeyboardButton(f"أضف رابط/حساب لطلب #{p['id']}", callback_data=f"add_purchase_input_{p['id']}")])
+        keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")])
+        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def request_speed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -902,6 +1019,15 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(
+        "ℹ️ *المساعدة والدعم*\n━━━━━━━━━━━━━━━━━━\n\n"
+        "🛍️ *كيف تشتري:*\n1. اذهب للمنتجات\n2. اختر الكاتيجري ثم التطبيق\n3. اختر الخدمة وأكد الشراء\n\n"
+        "💰 *كيف تشحن الرصيد:*\n1. اذهب لـ شحن رصيد\n2. أرسل الدفع\n3. ارفع الإيصال\n4. انتظر الموافقة\n\n"
+        "📞 *تواصل مع الدعم:* `@MezoStoreeAdmin`",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
+
+async def show_help_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "ℹ️ *المساعدة والدعم*\n━━━━━━━━━━━━━━━━━━\n\n"
         "🛍️ *كيف تشتري:*\n1. اذهب للمنتجات\n2. اختر الكاتيجري ثم التطبيق\n3. اختر الخدمة وأكد الشراء\n\n"
         "💰 *كيف تشحن الرصيد:*\n1. اذهب لـ شحن رصيد\n2. أرسل الدفع\n3. ارفع الإيصال\n4. انتظر الموافقة\n\n"
@@ -1963,6 +2089,12 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Check for main menu button presses first
+    text = update.message.text.strip()
+    if text in ["🛍️ المنتجات", "💼 محفظتي", "➕ شحن رصيد", "📋 طلباتي", "ℹ️ مساعدة"]:
+        await handle_main_menu_button(update, context)
+        return
+    
     state = context.user_data.get('state')
 
     if state == WAITING_CATEGORY_NAME:
