@@ -323,7 +323,7 @@ async def show_products_by_app(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = []
     for p in products:
         emoji = "🟢" if p['stock'] != 0 else "🔴"
-        stock_display = "غير محدود" if p['stock'] < 0 else str(p['stock']) + " متوفر"
+        stock_display = "♾️ لا محدود" if p['stock'] < 0 else str(p['stock']) + " متوفر"
         keyboard.append([InlineKeyboardButton(
             f"{emoji} {p['name']} — ${p['price']:.2f} ({stock_display})",
             callback_data=f"product_{p['id']}_{app_id}_{cat_id}"
@@ -351,7 +351,7 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("المنتج غير موجود!", show_alert=True)
         return
     if product['stock'] < 0:
-        stock_text = "✅ متوفر غير محدود"
+        stock_text = "✅ متوفر ♾️ لا محدود"
     elif product['stock'] > 0:
         stock_text = f"✅ متوفر ({product['stock']} قطعة)"
     else:
@@ -426,7 +426,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'max_qty': max_qty
     }
 
-    available_text = "غير محدود" if product['stock'] < 0 else str(product['stock'])
+    available_text = "♾️ لا محدود" if product['stock'] < 0 else str(product['stock'])
     msg_text = f"🛒 *اختر الكمية*\n\n"
     if product.get('requires_input'):
         msg_text += "⚠️ *ملاحظة مهمة:* هذه الخدمة بتطلب الرابط بتاعك بعد الشراء.\n\n"
@@ -562,7 +562,7 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'max_qty': max_qty
     }
     context.user_data['state'] = WAITING_PURCHASE_QUANTITY
-    available_text = "غير محدود" if product['stock'] < 0 else str(product['stock'])
+    available_text = "♾️ لا محدود" if product['stock'] < 0 else str(product['stock'])
     await query.edit_message_text(
         f"📥 أدخل الكمية التي تريد شرائها:\n\n"
         f"📦 {product['name']}\n"
