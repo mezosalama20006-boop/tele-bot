@@ -940,7 +940,8 @@ async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TY
                 f"👤 {user.first_name} (@{user.username or 'N/A'})\n"
                 f"🆔 `{user.id}`\n"
                 f"🔢 #{deposit_id}\n"
-                f"💰 *{amount_egp:.2f} جنيه* = *${amount:.2f}*\n"
+                f"💰 *المبلغ: {amount_egp:.2f} جنيه*\n"
+                f"💵 *{amount:.2f} دولار*\n"
             )
             if payment_note:
                 caption += f"\n📱 رقم المحول: `{payment_note}`"
