@@ -1,9 +1,13 @@
+import os
 import sqlite3
 from datetime import datetime
 
 class Database:
     def __init__(self, db_path="store.db"):
-        self.db_path = db_path
+        self.db_path = os.path.abspath(db_path)
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
         self.init_db()
 
     def get_conn(self):
@@ -83,10 +87,18 @@ class Database:
             user_id INTEGER NOT NULL,
             photo_file_id TEXT NOT NULL,
             amount REAL NOT NULL,
+            amount_egp REAL DEFAULT 0,
+            payment_note TEXT DEFAULT '',
             status TEXT DEFAULT 'pending',
             approved_by INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )''')
+
+        existing_deposits_columns = [row['name'] for row in c.execute("PRAGMA table_info(deposits)").fetchall()]
+        if 'amount_egp' not in existing_deposits_columns:
+            c.execute("ALTER TABLE deposits ADD COLUMN amount_egp REAL DEFAULT 0")
+        if 'payment_note' not in existing_deposits_columns:
+            c.execute("ALTER TABLE deposits ADD COLUMN payment_note TEXT DEFAULT ''")
 
         # Transactions
         c.execute('''CREATE TABLE IF NOT EXISTS transactions (
@@ -277,6 +289,37 @@ class Database:
         conn.commit()
         conn.close()
         return pid
+
+    def update_product(self, product_id, name=None, description=None, price=None,
+                       requires_input=None, input_prompt=None, infinite_stock=None):
+        updates = []
+        params = []
+        if name is not None:
+            updates.append("name=?")
+            params.append(name)
+        if description is not None:
+            updates.append("description=?")
+            params.append(description)
+        if price is not None:
+            updates.append("price=?")
+            params.append(price)
+        if requires_input is not None:
+            updates.append("requires_input=?")
+            params.append(requires_input)
+        if input_prompt is not None:
+            updates.append("input_prompt=?")
+            params.append(input_prompt)
+        if infinite_stock is not None:
+            updates.append("infinite_stock=?")
+            params.append(infinite_stock)
+        if not updates:
+            return False
+        params.append(product_id)
+        conn = self.get_conn()
+        conn.execute(f"UPDATE products SET {', '.join(updates)} WHERE id=?", params)
+        conn.commit()
+        conn.close()
+        return True
 
     def get_all_products(self):
         conn = self.get_conn()
@@ -614,12 +657,12 @@ class Database:
 
     # ── DEPOSITS ───────────────────────────────────────────
 
-    def create_deposit_request(self, user_id, photo_file_id, amount):
+    def create_deposit_request(self, user_id, photo_file_id, amount, amount_egp=0, payment_note=''):
         conn = self.get_conn()
         c = conn.cursor()
         c.execute(
-            "INSERT INTO deposits (user_id, photo_file_id, amount) VALUES (?,?,?)",
-            (user_id, photo_file_id, amount)
+            "INSERT INTO deposits (user_id, photo_file_id, amount, amount_egp, payment_note) VALUES (?,?,?,?,?)",
+            (user_id, photo_file_id, amount, amount_egp, payment_note)
         )
         dep_id = c.lastrowid
         conn.commit()
@@ -650,9 +693,9 @@ class Database:
     def approve_deposit(self, deposit_id, amount, admin_id):
         conn = self.get_conn()
         dep = conn.execute("SELECT * FROM deposits WHERE id=?", (deposit_id,)).fetchone()
-        if not dep:
+        if not dep or dep['status'] != 'pending':
             conn.close()
-            return
+            return False
         conn.execute(
             "UPDATE deposits SET status='approved', approved_by=? WHERE id=?",
             (admin_id, deposit_id)
@@ -664,15 +707,21 @@ class Database:
         )
         conn.commit()
         conn.close()
+        return True
 
     def reject_deposit(self, deposit_id, admin_id):
         conn = self.get_conn()
+        dep = conn.execute("SELECT * FROM deposits WHERE id=?", (deposit_id,)).fetchone()
+        if not dep or dep['status'] != 'pending':
+            conn.close()
+            return False
         conn.execute(
             "UPDATE deposits SET status='rejected', approved_by=? WHERE id=?",
             (admin_id, deposit_id)
         )
         conn.commit()
         conn.close()
+        return True
 
     # ── STATS ──────────────────────────────────────────────
 
