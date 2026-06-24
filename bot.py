@@ -39,7 +39,6 @@ WAITING_APP_EMOJI           = 11
 WAITING_BROADCAST_MESSAGE   = 12
 WAITING_PURCHASE_QUANTITY   = 13
 WAITING_PRODUCT_TYPE         = 14
-WAITING_PRODUCT_INPUT_PROMPT = 15
 WAITING_PURCHASE_INPUT       = 16
 WAITING_ADMIN_BALANCE_EDIT   = 17
 WAITING_PRODUCT_EDIT_NAME    = 18
@@ -1696,13 +1695,75 @@ async def start_edit_product(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data['pending_product_edit_id'] = product_id
     context.user_data['pending_product_edit_app'] = app_id
     context.user_data['pending_product_edit_cat'] = cat_id
-    context.user_data['state'] = WAITING_PRODUCT_EDIT_NAME
     await query.edit_message_text(
         f"✏️ تعديل الخدمة: *{product['name']}*\n\n"
-        f"أدخل الاسم الجديد للخدمة أو أرسل نفس الاسم للاحتفاظ به.",
+        "اختر ما تريد تغييره:",
         parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📛 تعديل الاسم", callback_data=f"admin_editfield_name_{product_id}_{app_id}_{cat_id}")],
+            [InlineKeyboardButton("📝 تعديل الوصف", callback_data=f"admin_editfield_desc_{product_id}_{app_id}_{cat_id}")],
+            [InlineKeyboardButton("💲 تعديل السعر", callback_data=f"admin_editfield_price_{product_id}_{app_id}_{cat_id}")],
+            [InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"admin_editfield_quantity_{product_id}_{app_id}_{cat_id}")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]
+        ])
     )
+
+async def select_product_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    parts = query.data.split("_")
+    field = parts[2]
+    product_id = int(parts[3])
+    app_id = int(parts[4])
+    cat_id = int(parts[5])
+    product = db.get_product(product_id)
+    if not product:
+        await query.answer("الخدمة غير موجودة!", show_alert=True)
+        return
+    context.user_data['pending_product_edit_id'] = product_id
+    context.user_data['pending_product_edit_app'] = app_id
+    context.user_data['pending_product_edit_cat'] = cat_id
+    if field == 'name':
+        context.user_data['pending_product_edit_field'] = 'name'
+        context.user_data['state'] = WAITING_PRODUCT_EDIT_NAME
+        await query.edit_message_text(
+            f"✏️ أدخل الاسم الجديد للخدمة أو أرسل نفس الاسم للاحتفاظ به.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+        )
+        return
+    if field == 'desc':
+        context.user_data['pending_product_edit_field'] = 'description'
+        context.user_data['state'] = WAITING_PRODUCT_EDIT_DESC
+        await query.edit_message_text(
+            f"✏️ أدخل الوصف الجديد للخدمة أو أرسل نفس الوصف للاحتفاظ به.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+        )
+        return
+    if field == 'price':
+        context.user_data['pending_product_edit_field'] = 'price'
+        context.user_data['state'] = WAITING_PRODUCT_EDIT_PRICE
+        await query.edit_message_text(
+            f"✏️ أدخل السعر الجديد للخدمة (مثال: 9.99).",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+        )
+        return
+    if field == 'quantity':
+        if product.get('requires_input') or product.get('infinite_stock'):
+            await query.edit_message_text(
+                "⚠️ هذه الخدمة لا تُعدل كمية تقليدية هنا.\n"
+                "يمكنك إضافة أو حذف العناصر من صفحة الخدمة لإدارة العرض.",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("عرض الخدمة", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+            )
+        else:
+            query.data = f"admin_mgitems_{product_id}_{app_id}_{cat_id}"
+            await manage_items(update, context)
+        return
 
 async def get_product_edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -1710,15 +1771,19 @@ async def get_product_edit_name(update: Update, context: ContextTypes.DEFAULT_TY
     if not product_id:
         await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
         return
+    context.user_data['pending_product_edit_field'] = 'name'
     context.user_data['edit_product_name'] = text
-    context.user_data['state'] = WAITING_PRODUCT_EDIT_DESC
-    await update.message.reply_text("✏️ أدخل الوصف الجديد للخدمة أو أرسل نفس الوصف للاحتفاظ به.")
+    await finalize_product_edit(update, context)
 
 async def get_product_edit_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    product_id = context.user_data.get('pending_product_edit_id')
+    if not product_id:
+        await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
+        return
+    context.user_data['pending_product_edit_field'] = 'description'
     context.user_data['edit_product_desc'] = text
-    context.user_data['state'] = WAITING_PRODUCT_EDIT_PRICE
-    await update.message.reply_text("✏️ أدخل السعر الجديد للخدمة (مثال: 9.99) أو أرسل نفس السعر للاحتفاظ به.")
+    await finalize_product_edit(update, context)
 
 async def get_product_edit_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1730,16 +1795,8 @@ async def get_product_edit_price(update: Update, context: ContextTypes.DEFAULT_T
     if not product_id:
         await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
         return
+    context.user_data['pending_product_edit_field'] = 'price'
     context.user_data['edit_product_price'] = price
-    product = db.get_product(product_id)
-    if product and product.get('requires_input'):
-        context.user_data['state'] = WAITING_PRODUCT_EDIT_PROMPT
-        await update.message.reply_text(
-            "✏️ أدخل نص الطلب المطلوب من المستخدم بعد الشراء أو أرسل نفس النص للاحتفاظ به.\n"
-            "اكتب `skip` إذا كنت لا تريد تغييره.",
-            parse_mode='Markdown'
-        )
-        return
     await finalize_product_edit(update, context)
 
 async def get_product_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1758,18 +1815,21 @@ async def finalize_product_edit(update: Update, context: ContextTypes.DEFAULT_TY
     if not product:
         await update.message.reply_text("❌ الخدمة غير موجودة.")
         return
-    name = context.user_data.get('edit_product_name', product['name'])
-    desc = context.user_data.get('edit_product_desc', product['description'])
-    price = context.user_data.get('edit_product_price', product['price'])
-    prompt = context.user_data.get('edit_product_prompt', product.get('input_prompt', ''))
-    if isinstance(prompt, str) and prompt.lower() == 'skip':
-        prompt = product.get('input_prompt', '')
+    field = context.user_data.get('pending_product_edit_field')
+    name = context.user_data.get('edit_product_name') if field == 'name' else None
+    desc = context.user_data.get('edit_product_desc') if field == 'description' else None
+    price = context.user_data.get('edit_product_price') if field == 'price' else None
+    prompt = None
+    if field == 'input_prompt':
+        prompt = context.user_data.get('edit_product_prompt', product.get('input_prompt', ''))
+        if isinstance(prompt, str) and prompt.lower() == 'skip':
+            prompt = product.get('input_prompt', '')
     db.update_product(
         product_id,
         name=name,
         description=desc,
         price=price,
-        input_prompt=prompt if product.get('requires_input') else product.get('input_prompt', ''),
+        input_prompt=prompt if field == 'input_prompt' else None,
     )
     context.user_data.pop('state', None)
     context.user_data.pop('pending_product_edit_id', None)
@@ -2306,8 +2366,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await get_product_edit_desc(update, context)
     elif state == WAITING_PRODUCT_EDIT_PRICE:
         await get_product_edit_price(update, context)
-    elif state == WAITING_PRODUCT_EDIT_PROMPT:
-        await get_product_edit_prompt(update, context)
     elif state == WAITING_PAYMENT_AMOUNT:
         await receive_payment_amount(update, context)
     elif state == WAITING_PURCHASE_QUANTITY:
@@ -2441,8 +2499,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("admin_add_app_"): await start_add_app(update, context)
     elif data.startswith("admin_app_"):     await admin_app_detail(update, context)
     elif data.startswith("admin_del_app_"): await admin_delete_app(update, context)
-    elif data.startswith("admin_add_prod_"):await start_add_product(update, context)
+    elif data.startswith("admin_add_prod_"): await start_add_product(update, context)
     elif data.startswith("admin_edit_prod_"): await start_edit_product(update, context)
+    elif data.startswith("admin_editfield_"): await select_product_edit_field(update, context)
     elif data.startswith("admin_prod_"):
         context.user_data.pop('state', None)
         context.user_data.pop('adding_item_to', None)
