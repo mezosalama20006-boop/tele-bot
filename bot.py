@@ -438,8 +438,8 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"📦 *{product['name']}*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📝 {product['description']}\n\n"
-        f"💰 السعر: *${product['price']:.2f}*\n"
-        f"💴 السعر بالمصري لكل 1000: *{product['price'] * EGP_EXCHANGE_RATE:.2f} جنيه*\n"
+        f"💰 السعر لكل {product.get('price_unit') or PRICE_UNIT}: *${product['price']:.2f}*\n"
+        f"💴 السعر بالمصري لكل {product.get('price_unit') or PRICE_UNIT}: *{product['price'] * EGP_EXCHANGE_RATE:.2f} جنيه*\n"
         f"📊 الحالة: {stock_text}"
     )
     if product.get('requires_input'):
@@ -621,7 +621,7 @@ async def select_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"✅ اخترت كمية *{quantity}*\n\n"
         f"📦 المنتج: *{product['name']}*\n"
-        f"💰 السعر لكل وحدة: *${product['price']:.2f}*\n"
+        f"💰 السعر لكل {product.get('price_unit') or PRICE_UNIT}: *${product['price']:.2f}*\n"
         f"🔢 الكمية: *{quantity}*\n"
         f"💵 الإجمالي: *${total_price:.2f}*\n"
         f"💼 رصيدك: *${balance:.2f}*\n\n"
@@ -660,7 +660,7 @@ async def enter_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"📥 أدخل الكمية التي تريد شرائها:\n\n"
         f"📦 {product['name']}\n"
-        f"💰 السعر لكل وحدة: *${product['price']:.2f}*\n"
+        f"💰 السعر لكل {product.get('price_unit') or PRICE_UNIT}: *${product['price']:.2f}*\n"
         f"📊 المتوفر: *{available_text}*\n"
         f"{balance_text}"
         f"_اكتب رقما بين 1 و {max_qty}_",
@@ -724,7 +724,7 @@ async def receive_purchase_quantity(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text(
         f"✅ اخترت كمية *{quantity}*\n\n"
         f"📦 المنتج: *{product['name']}*\n"
-        f"💰 السعر لكل وحدة: *${product['price']:.2f}*\n"
+        f"💰 السعر لكل {product.get('price_unit') or PRICE_UNIT}: *${product['price']:.2f}*\n"
         f"🔢 الكمية: *{quantity}*\n"
         f"💵 الإجمالي: *${total_price:.2f}*\n"
         f"{balance_text_long}"
@@ -1522,7 +1522,8 @@ async def handle_product_infinite_choice(update: Update, context: ContextTypes.D
         created_text,
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ انتهيت", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]
+            [InlineKeyboardButton("✅ انتهيت", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")],
+            [InlineKeyboardButton("🔙 رجوع للتطبيق", callback_data=f"admin_app_{app_id}_{cat_id}")]
         ])
     )
 
@@ -1551,7 +1552,11 @@ async def get_product_input_prompt(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text(
         f"✅ *تم إنشاء الخدمة: {product['name']}*\n\n"
         "هذه الخدمة تطلب رابط/حساب من المستخدم بعد الشراء، وستتم معالجة الطلب بواسطة الإدارة.",
-        parse_mode='Markdown'
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("عرض الخدمة", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")],
+            [InlineKeyboardButton("🔙 رجوع للتطبيق", callback_data=f"admin_app_{app_id}_{cat_id}")]
+        ])
     )
 
 async def start_add_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
