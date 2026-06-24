@@ -42,6 +42,10 @@ WAITING_PRODUCT_TYPE         = 14
 WAITING_PRODUCT_INPUT_PROMPT = 15
 WAITING_PURCHASE_INPUT       = 16
 WAITING_ADMIN_BALANCE_EDIT   = 17
+WAITING_PRODUCT_EDIT_NAME    = 18
+WAITING_PRODUCT_EDIT_DESC    = 19
+WAITING_PRODUCT_EDIT_PRICE   = 20
+WAITING_PRODUCT_EDIT_PROMPT  = 21
 
 
 def is_admin(user_id):
@@ -56,6 +60,8 @@ def persistent_keyboard():
         ["ℹ️ مساعدة"]
     ], resize_keyboard=True, is_persistent=True)
 
+import re
+
 def format_price_summary(price, quantity=1):
     total_price = price * quantity
     egp_price = price * EGP_EXCHANGE_RATE
@@ -65,6 +71,31 @@ def format_price_summary(price, quantity=1):
         f"💴 السعر بالمصري لكل 1000: *{egp_price:.2f} جنيه*\n"
         f"💵 السعر الإجمالي: *${total_price:.2f}* / *{egp_total:.2f} جنيه*"
     )
+
+
+def parse_deposit_message(text):
+    text = text.replace(',', '.').strip()
+    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    if not match:
+        return None, ''
+    amount_egp = float(match.group(1))
+    note = text[match.end():].strip()
+    return amount_egp, note
+
+
+def escape_markdown(text):
+    if text is None:
+        return ''
+    # keep potential URLs intact while escaping other Markdown chars
+    if re.search(r'https?://\S+|www\.\S+', text):
+        return text.replace('`', '')
+    return re.sub(r'([_\*\[\]\(\)~`>#+\-=|{}\.!])', r'\\\1', text)
+
+
+def format_user_input(user_input):
+    if not user_input:
+        return '_لا يوجد_'
+    return escape_markdown(user_input)
 
 
 def main_menu_keyboard(user_id):
@@ -91,7 +122,7 @@ async def notify_admin_order(context, user, product_name, quantity, user_input=N
         total_price = price * quantity
         text += f"💰 السعر الإجمالي: *${total_price:.2f}*\n"
     if user_input:
-        text += f"📎 الرابط/الحساب المرسل: `{user_input}`\n"
+        text += f"📎 الرابط/الحساب المرسل: {format_user_input(user_input)}\n"
     else:
         text += "📎 لا يوجد رابط من المستخدم. هذه خدمة يتم تسليمها من الإدارة.\n"
     for admin_id in ADMIN_IDS:
@@ -191,17 +222,15 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 {udisplay} — 🆔 `{o.get('user_id')}`\n"
             f"📅 {o.get('date')} — 📦 الكمية: *{quantity}*\n"
             f"💰 الإجمالي: *${o.get('total_price'):.2f}*\n"
-            f"📎 الرابط/الحساب المرسل: `{user_input}`\n"
+            f"📎 الرابط/الحساب المرسل: {format_user_input(user_input)}\n"
         )
         # add action button row per order
         if o.get('status') == 'completed':
             text += "   ✅ الحالة: *مكتمل*\n"
-            # no action button for completed
-            # but provide a detail button
             if 'keyboard_rows' not in locals():
                 keyboard_rows = []
             keyboard_rows.append([InlineKeyboardButton(f"🔎 تفاصيل #{o.get('id')}", callback_data=f"order_detail_{o.get('id')}")])
-        else:
+        elif o.get('status') in ['pending', 'in_progress']:
             if 'keyboard_rows' not in locals():
                 keyboard_rows = []
             keyboard_rows.append([
@@ -209,6 +238,11 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton(f"❌ رفض #{o.get('id')}", callback_data=f"reject_purchase_{o.get('id')}"),
                 InlineKeyboardButton(f"🔎 تفاصيل #{o.get('id')}", callback_data=f"order_detail_{o.get('id')}")
             ])
+        else:
+            text += f"   ✅ الحالة: *{o.get('status').upper()}*\n"
+            if 'keyboard_rows' not in locals():
+                keyboard_rows = []
+            keyboard_rows.append([InlineKeyboardButton(f"🔎 تفاصيل #{o.get('id')}", callback_data=f"order_detail_{o.get('id')}")])
         text += "━━━━━━━━━━━━━━━━━━\n"
 
     nav = []
@@ -407,8 +441,8 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"📊 الحالة: {stock_text}"
     )
     if product.get('requires_input'):
-        # show single-word instruction per user request
-        text += f"\n\n📌 أرسل الرابط"
+        # show instruction that input is required after selecting quantity
+        text += "\n\n📌 بعد اختيار الكمية، سيُطلب منك إرسال الرابط أو الحساب."
     elif product.get('infinite_stock'):
         text += "\n\n♾️ هذه الخدمة متاحة بعدد لانهائي."
     keyboard = []
@@ -646,14 +680,19 @@ async def receive_purchase_quantity(update: Update, context: ContextTypes.DEFAUL
             'app_id': data['app_id'],
             'cat_id': data['cat_id']
         }
-        context.user_data['state'] = WAITING_PURCHASE_INPUT
+        context.user_data.pop('state', None)
         await update.message.reply_text(
-            f"📎 *  , هذه الخدمة تطلب رابط أو حساب قبل إتمام الشراء .وبعد اختيار الكميه سيتم تأكيد الشراء تلقائي.*\n\n"
+            f"📎 *هذه الخدمة تحتاج رابط/حساب بعد تأكيد الكمية.*\n\n"
             f"📦 المنتج: *{product['name']}*\n"
             f"🔢 الكمية: *{quantity}*\n"
             f"{format_price_summary(product['price'], quantity)}\n\n"
-            f"{data['input_prompt']}",
-            parse_mode='Markdown'
+            f"💳 رصيدك: *${balance:.2f}*\n\n"
+            f"هل تريد متابعة الطلب ثم إرسال الرابط؟",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ نعم، تأكيد", callback_data=f"confirmbuy_{data['product_id']}_{data['app_id']}_{data['cat_id']}_{quantity}"),
+                 InlineKeyboardButton("❌ إلغاء", callback_data=f"app_{data['app_id']}_{data['cat_id']}")]
+            ])
         )
         return
 
@@ -728,16 +767,17 @@ async def add_balance_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━\n\n"
         "💳 *طرق الدفع المتاحة:*\n"
         "• Binance: `1199904304`\n"
-        "• Vodafone Cash: `01028749936`\n\n"
+        "• Vodafone Cash: `01028749936`\n"
+        "• تحويل فودافون كاش باسم: *مريم*\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "💵 *سعر التحويل:* 1 دولار = 55 جنيه مصري\n\n"
         "📌 *طريقة الشحن:*\n"
-        "1- حوّل المبلغ المطلوب على أي وسيلة من وسائل الدفع\n"
-        "2- بعد التحويل اكتب هنا المبلغ بالدولار الذي أرسلته\n\n"
+        "1- حوّل المبلغ بالجنيه المصري على الرقم المناسب.\n"
+        "2- أرسل هنا المبلغ بالجنيه ورقم الهاتف الذي أرسلت منه التحويل.\n\n"
         "📥 *مثال:*\n"
-        "لو حولت 55 جنيه → اكتب: `1`\n"
-        "لو حولت 110 جنيه → اكتب: `2`\n\n"
-        "✍️ من فضلك أدخل المبلغ بالدولار الآن:"
+        "لو حولت 55 جنيه من 01012345678 → اكتب: `55 01012345678`\n"
+        "لو حولت 110 جنيه من 0112xxxxxxx → اكتب: `110 0112xxxxxxx`\n\n"
+        "✍️ من فضلك أدخل المبلغ بالجنيه والمعلومات تحت الصورة الآن:"
     )
 
     await query.edit_message_text(
@@ -757,16 +797,17 @@ async def add_balance_start_text(update: Update, context: ContextTypes.DEFAULT_T
         "━━━━━━━━━━━━━━━━━━\n\n"
         "💳 *طرق الدفع المتاحة:*\n"
         "• Binance: `1199904304`\n"
-        "• Vodafone Cash: `01028749936`\n\n"
+        "• Vodafone Cash: `01028749936`\n"
+        "• تحويل فودافون كاش باسم: *مريم*\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "💵 *سعر التحويل:* 1 دولار = 55 جنيه مصري\n\n"
         "📌 *طريقة الشحن:*\n"
-        "1- حوّل المبلغ المطلوب على أي وسيلة من وسائل الدفع\n"
-        "2- بعد التحويل اكتب هنا المبلغ بالدولار الذي أرسلته\n\n"
+        "1- حوّل المبلغ بالجنيه المصري على الرقم المناسب.\n"
+        "2- أرسل هنا المبلغ بالجنيه ورقم الهاتف الذي أرسلت منه التحويل.\n\n"
         "📥 *مثال:*\n"
-        "لو حولت 55 جنيه → اكتب: `1`\n"
-        "لو حولت 110 جنيه → اكتب: `2`\n\n"
-        "✍️ من فضلك أدخل المبلغ بالدولار الآن:"
+        "لو حولت 55 جنيه من 01012345678 → اكتب: `55 01012345678`\n"
+        "لو حولت 110 جنيه من 0112xxxxxxx → اكتب: `110 0112xxxxxxx`\n\n"
+        "✍️ من فضلك أدخل المبلغ بالجنيه والمعلومات تحت الصورة الآن:"
     )
 
     await update.message.reply_text(
@@ -854,48 +895,59 @@ async def receive_purchase_input(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
 
 async def receive_payment_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        amount = float(update.message.text.replace(',', '.'))
-        if amount <= 0:
-            raise ValueError
-        context.user_data['deposit_amount'] = amount
-        context.user_data['state'] = WAITING_PAYMENT_PROOF
-        await update.message.reply_text(
-            f"✅ المبلغ: *${amount:.2f}*\n\n"
-            f"📸 *الخطوة 2:* أرسل *صورة* إيصال الدفع:",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")]]))
-        return WAITING_PAYMENT_PROOF
-    except ValueError:
-        await update.message.reply_text("❌ أدخل مبلغاً صحيحاً (مثال: `25` أو `10.5`)", parse_mode='Markdown')
+    amount_egp, payment_note = parse_deposit_message(update.message.text)
+    if amount_egp is None or amount_egp <= 0:
+        await update.message.reply_text("❌ أدخل المبلغ بالجنيه المصري والمعلومات بشكل صحيح. مثال: `110 01012345678`", parse_mode='Markdown')
         return WAITING_PAYMENT_AMOUNT
+    amount_usd = round(amount_egp / EGP_EXCHANGE_RATE, 2)
+    context.user_data['deposit_amount'] = amount_usd
+    context.user_data['deposit_amount_egp'] = amount_egp
+    context.user_data['deposit_note'] = payment_note
+    context.user_data['state'] = WAITING_PAYMENT_PROOF
+    await update.message.reply_text(
+        f"✅ المبلغ: *{amount_egp:.2f} جنيه* = *${amount_usd:.2f}*\n\n"
+        f"📸 *الخطوة 2:* أرسل *صورة* إيصال الدفع:",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="main_menu")]]))
+    return WAITING_PAYMENT_PROOF
 
 async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('state') != WAITING_PAYMENT_PROOF:
+        await update.message.reply_text(
+            "❌ لرفع صورة إيصال الدفع، ادخل أولاً طلب شحن الرصيد من القائمة ثم اتبع التعليمات.",
+            parse_mode='Markdown')
+        return
     if not update.message.photo:
         await update.message.reply_text("❌ أرسل *صورة* إيصال الدفع.", parse_mode='Markdown')
         return WAITING_PAYMENT_PROOF
     user   = update.effective_user
     photo  = update.message.photo[-1]
     amount = context.user_data.get('deposit_amount', 0)
-    deposit_id = db.create_deposit_request(user.id, photo.file_id, amount)
+    amount_egp = context.user_data.get('deposit_amount_egp', 0)
+    payment_note = context.user_data.get('deposit_note', '')
+    deposit_id = db.create_deposit_request(user.id, photo.file_id, amount, amount_egp, payment_note)
     await update.message.reply_text(
         f"✅ *تم إرسال الطلب!*\n\n"
         f"🔢 رقم الطلب: `#{deposit_id}`\n"
-        f"💰 المبلغ: *${amount:.2f}*\n"
+        f"💰 المبلغ: *{amount_egp:.2f} جنيه* = *${amount:.2f}*\n"
         f"⏳ الحالة: *قيد المراجعة*\n\n"
         f"ستصلك رسالة فور الموافقة!",
         parse_mode='Markdown', reply_markup=main_menu_keyboard(user.id))
     for admin_id in ADMIN_IDS:
         try:
+            caption = (
+                f"💳 *طلب إيداع جديد*\n━━━━━━━━━━━━━━━━━━\n"
+                f"👤 {user.first_name} (@{user.username or 'N/A'})\n"
+                f"🆔 `{user.id}`\n"
+                f"🔢 #{deposit_id}\n"
+                f"💰 *{amount_egp:.2f} جنيه* = *${amount:.2f}*\n"
+            )
+            if payment_note:
+                caption += f"\n📱 رقم المحول: `{payment_note}`"
+            caption += "\n\nهل ترغب بالموافقة أو الرفض؟"
             await context.bot.send_photo(
                 chat_id=admin_id, photo=photo.file_id,
-                caption=(
-                    f"💳 *طلب إيداع جديد*\n━━━━━━━━━━━━━━━━━━\n"
-                    f"👤 {user.first_name} (@{user.username or 'N/A'})\n"
-                    f"🆔 `{user.id}`\n"
-                    f"🔢 #{deposit_id}\n"
-                    f"💰 *${amount:.2f}*"
-                ),
+                caption=caption,
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(f"✅ قبول ${amount:.2f}", callback_data=f"approve_deposit_{deposit_id}_{amount}"),
@@ -905,6 +957,8 @@ async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TY
             logger.error(f"Failed to notify admin {admin_id}: {e}")
     context.user_data.pop('state', None)
     context.user_data.pop('deposit_amount', None)
+    context.user_data.pop('deposit_amount_egp', None)
+    context.user_data.pop('deposit_note', None)
     return ConversationHandler.END
 
 # ══════════════════════════════════════════════════════════
@@ -937,7 +991,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f" — *🚀 تم تقديم طلب تسريع*"
             text += "\n"
             if p.get('user_input'):
-                text += f"   📎 الرابط/الحساب المرسل: `{p['user_input']}`\n"
+                text += f"   📎 الرابط/الحساب المرسل: {format_user_input(p['user_input'])}\n"
             if p.get('speed_status') == 'none' and p.get('status') not in ['completed', 'failed', 'rejected']:
                 keyboard.append([InlineKeyboardButton("🚀 طلب تسريع الخدمة", callback_data=f"request_speed_{p['id']}")])
             if p.get('requires_input') and not p.get('user_input'):
@@ -969,7 +1023,7 @@ async def show_orders_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f" — *🚀 تم تقديم طلب تسريع*"
             text += "\n"
             if p.get('user_input'):
-                text += f"   📎 الرابط/الحساب المرسل: `{p['user_input']}`\n"
+                text += f"   📎 الرابط/الحساب المرسل: {format_user_input(p['user_input'])}\n"
             if p.get('speed_status') == 'none' and p.get('status') not in ['completed', 'failed', 'rejected']:
                 keyboard.append([InlineKeyboardButton("🚀 طلب تسريع الخدمة", callback_data=f"request_speed_{p['id']}")])
             if p.get('requires_input') and not p.get('user_input'):
@@ -1126,7 +1180,7 @@ async def speed_request_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📦 الخدمة: *{purchase.get('product_name')}*\n"
         f"🔢 الكمية: *{purchase.get('quantity')}*\n"
         f"📅 التاريخ: {purchase.get('date')}\n"
-        f"📎 الرابط/الحساب المرسل: `{purchase.get('user_input') or '_لم يرسل بعد_'}`\n"
+        f"📎 الرابط/الحساب المرسل: {format_user_input(purchase.get('user_input'))}\n"
         f"📊 حالة الطلب: *{purchase.get('status', 'pending').upper()}*\n"
         f"🚀 حالة التسريع: *{speed_label}*\n"
     )
@@ -1606,12 +1660,11 @@ async def admin_product_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [
         [InlineKeyboardButton("➕ إضافة عنصر",    callback_data=f"admin_additem_{product_id}_{app_id}_{cat_id}"),
          InlineKeyboardButton("🗑️ حذف عناصر",    callback_data=f"admin_mgitems_{product_id}_{app_id}_{cat_id}")],
+        [InlineKeyboardButton("✏️ تعديل الخدمة",   callback_data=f"admin_edit_prod_{product_id}_{app_id}_{cat_id}")],
         [InlineKeyboardButton("🗑️ حذف الخدمة",   callback_data=f"admin_delprod_{product_id}_{app_id}_{cat_id}")],
         [InlineKeyboardButton("🔙 رجوع",           callback_data=f"admin_app_{app_id}_{cat_id}")]
     ]
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
-    query.data = f"admin_mgitems_{product_id}_{app_id}_{cat_id}"
-    await manage_items(update, context)
 
 async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1626,6 +1679,114 @@ async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("✅ تم الحذف!", show_alert=True)
     query.data = f"admin_app_{app_id}_{cat_id}"
     await admin_app_detail(update, context)
+
+async def start_edit_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    parts = query.data.split("_")
+    product_id = int(parts[3])
+    app_id = int(parts[4])
+    cat_id = int(parts[5])
+    product = db.get_product(product_id)
+    if not product:
+        await query.answer("الخدمة غير موجودة!", show_alert=True)
+        return
+    context.user_data['pending_product_edit_id'] = product_id
+    context.user_data['pending_product_edit_app'] = app_id
+    context.user_data['pending_product_edit_cat'] = cat_id
+    context.user_data['state'] = WAITING_PRODUCT_EDIT_NAME
+    await query.edit_message_text(
+        f"✏️ تعديل الخدمة: *{product['name']}*\n\n"
+        f"أدخل الاسم الجديد للخدمة أو أرسل نفس الاسم للاحتفاظ به.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+    )
+
+async def get_product_edit_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    product_id = context.user_data.get('pending_product_edit_id')
+    if not product_id:
+        await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
+        return
+    context.user_data['edit_product_name'] = text
+    context.user_data['state'] = WAITING_PRODUCT_EDIT_DESC
+    await update.message.reply_text("✏️ أدخل الوصف الجديد للخدمة أو أرسل نفس الوصف للاحتفاظ به.")
+
+async def get_product_edit_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data['edit_product_desc'] = text
+    context.user_data['state'] = WAITING_PRODUCT_EDIT_PRICE
+    await update.message.reply_text("✏️ أدخل السعر الجديد للخدمة (مثال: 9.99) أو أرسل نفس السعر للاحتفاظ به.")
+
+async def get_product_edit_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = float(update.message.text.replace(',', '.'))
+    except ValueError:
+        await update.message.reply_text("❌ أدخل رقماً صحيحاً للسعر.")
+        return
+    product_id = context.user_data.get('pending_product_edit_id')
+    if not product_id:
+        await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
+        return
+    context.user_data['edit_product_price'] = price
+    product = db.get_product(product_id)
+    if product and product.get('requires_input'):
+        context.user_data['state'] = WAITING_PRODUCT_EDIT_PROMPT
+        await update.message.reply_text(
+            "✏️ أدخل نص الطلب المطلوب من المستخدم بعد الشراء أو أرسل نفس النص للاحتفاظ به.\n"
+            "اكتب `skip` إذا كنت لا تريد تغييره.",
+            parse_mode='Markdown'
+        )
+        return
+    await finalize_product_edit(update, context)
+
+async def get_product_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data['edit_product_prompt'] = text
+    await finalize_product_edit(update, context)
+
+async def finalize_product_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    product_id = context.user_data.get('pending_product_edit_id')
+    app_id = context.user_data.get('pending_product_edit_app')
+    cat_id = context.user_data.get('pending_product_edit_cat')
+    if not product_id:
+        await update.message.reply_text("❌ حدث خطأ، الرجاء إعادة المحاولة.")
+        return
+    product = db.get_product(product_id)
+    if not product:
+        await update.message.reply_text("❌ الخدمة غير موجودة.")
+        return
+    name = context.user_data.get('edit_product_name', product['name'])
+    desc = context.user_data.get('edit_product_desc', product['description'])
+    price = context.user_data.get('edit_product_price', product['price'])
+    prompt = context.user_data.get('edit_product_prompt', product.get('input_prompt', ''))
+    if isinstance(prompt, str) and prompt.lower() == 'skip':
+        prompt = product.get('input_prompt', '')
+    db.update_product(
+        product_id,
+        name=name,
+        description=desc,
+        price=price,
+        input_prompt=prompt if product.get('requires_input') else product.get('input_prompt', ''),
+    )
+    context.user_data.pop('state', None)
+    context.user_data.pop('pending_product_edit_id', None)
+    context.user_data.pop('pending_product_edit_app', None)
+    context.user_data.pop('pending_product_edit_cat', None)
+    context.user_data.pop('edit_product_name', None)
+    context.user_data.pop('edit_product_desc', None)
+    context.user_data.pop('edit_product_price', None)
+    context.user_data.pop('edit_product_prompt', None)
+    if update.callback_query:
+        update.callback_query.data = f"admin_prod_{product_id}_{app_id}_{cat_id}"
+        await admin_product_detail(update, context)
+    else:
+        await update.message.reply_text(
+            "✅ تم تحديث الخدمة.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("عرض الخدمة", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+        )
 
 # ══════════════════════════════════════════════════════════
 # ADMIN — ALL PRODUCTS VIEW (flat list)
@@ -1663,7 +1824,11 @@ async def admin_deposits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     text = f"💳 *الإيداعات المعلقة ({len(deposits)})*\n━━━━━━━━━━━━━━━━━━\n\n"
     for dep in deposits:
-        text += f"🔢 #{dep['id']} — 👤 {dep['username']} — ${dep['amount']:.2f}\n"
+        egp = dep.get('amount_egp', 0)
+        note = dep.get('payment_note', '').strip()
+        text += f"🔢 #{dep['id']} — 👤 {dep['username']} — {egp:.2f} جنيه = ${dep['amount']:.2f}\n"
+        if note:
+            text += f"   📱 من: `{note}`\n"
         keyboard.append([InlineKeyboardButton(f"👁️ مراجعة #{dep['id']}", callback_data=f"review_deposit_{dep['id']}")])
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")])
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1679,15 +1844,21 @@ async def review_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("غير موجود!", show_alert=True)
         return
     amount = deposit['amount']
+    amount_egp = deposit.get('amount_egp', 0)
+    note = deposit.get('payment_note', '').strip()
+    caption = (
+        f"💳 *إيداع #{deposit_id}*\n"
+        f"👤 {deposit['username']}\n"
+        f"🆔 `{deposit['user_id']}`\n"
+        f"💰 المبلغ: *{amount_egp:.2f} جنيه* = *${amount:.2f}*\n"
+    )
+    if note:
+        caption += f"📱 رقم المحول: `{note}`\n"
+    caption += "\nهل تقبل هذا الإيداع؟"
     await context.bot.send_photo(
         chat_id=query.from_user.id,
         photo=deposit['photo_file_id'],
-        caption=(
-            f"💳 *إيداع #{deposit_id}*\n"
-            f"👤 {deposit['username']}\n"
-            f"🆔 `{deposit['user_id']}`\n"
-            f"💵 المبلغ: *${amount}*\n\nهل تقبل هذا الإيداع؟"
-        ),
+        caption=caption,
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ قبول",  callback_data=f"approve_deposit_{deposit_id}_{amount}")],
@@ -1710,7 +1881,10 @@ async def approve_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deposit = db.get_deposit(deposit_id)
     if not deposit:
         return
-    db.approve_deposit(deposit_id, amount, query.from_user.id)
+    success = db.approve_deposit(deposit_id, amount, query.from_user.id)
+    if not success:
+        await query.answer("❌ الطلب تم معالجته سابقًا.", show_alert=True)
+        return
     new_balance = db.get_balance(deposit['user_id'])
     try:
         await context.bot.send_message(
@@ -1735,7 +1909,10 @@ async def reject_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deposit    = db.get_deposit(deposit_id)
     if not deposit:
         return
-    db.reject_deposit(deposit_id, query.from_user.id)
+    success = db.reject_deposit(deposit_id, query.from_user.id)
+    if not success:
+        await query.answer("❌ الطلب تم معالجته سابقًا.", show_alert=True)
+        return
     try:
         await context.bot.send_message(
             chat_id=deposit['user_id'],
@@ -1792,6 +1969,9 @@ async def complete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if purchase.get('status') == 'completed':
         await query.answer("الطلب بالفعل مكتمل.", show_alert=True)
         return
+    if purchase.get('status') in ['rejected', 'failed']:
+        await query.answer("لا يمكن وضع هذا الطلب كمكتمل بعد رفضه أو فشله.", show_alert=True)
+        return
     # set purchase and related orders to completed
     db.set_purchase_status(purchase_id, 'completed')
     db.set_orders_status_by_purchase(purchase_id, 'completed')
@@ -1801,7 +1981,7 @@ async def complete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ تم إتمام طلبك بنجاح!\n"
             f"📦 الخدمة: *{purchase.get('product_name')}*\n"
             f"🔢 الكمية: *{purchase.get('quantity')}*\n"
-            f"📎 الرابط/الحساب الذي أرسلته: `{purchase.get('user_input') or '_لا يوجد_'}`"
+            f"📎 الرابط/الحساب الذي أرسلته: {format_user_input(purchase.get('user_input'))}"
         )
         await context.bot.send_message(chat_id=purchase['user_id'], text=notify_text, parse_mode='Markdown')
     except Exception:
@@ -1846,6 +2026,9 @@ async def execute_reject_purchase(update: Update, context: ContextTypes.DEFAULT_
     purchase = db.get_purchase(purchase_id)
     if not purchase:
         await query.answer("الطلب غير موجود!", show_alert=True)
+        return
+    if purchase.get('status') != 'pending':
+        await query.answer("لا يمكن رفض هذا الطلب الآن لأن حالته ليست قيد المعالجة.", show_alert=True)
         return
     success, err = db.refund_purchase(purchase_id)
     if not success:
@@ -1957,7 +2140,7 @@ async def order_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔢 الكمية المطلوبة: *{purchase.get('quantity')}*\n"
         f"💰 الإجمالي: *${purchase.get('total_price'):.2f}*\n"
         f"📅 التاريخ: {purchase.get('date')}\n"
-        f"📎 الرابط/الحساب المرسل:\n`{purchase.get('user_input') or '_لم يرسل بعد_'}`\n"
+        f"📎 الرابط/الحساب المرسل:\n{format_user_input(purchase.get('user_input'))}\n"
         f"📊 الحالة: *{purchase.get('status', 'pending').upper()}*\n"
     )
     # append speed label separately to avoid backslash inside f-string expression
@@ -1976,11 +2159,9 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = db.get_all_users()
     text  = f"👥 *كل المستخدمين ({len(users)})*\n━━━━━━━━━━━━━━━━━━\n\n"
     keyboard = []
-    for user in users[:20]:
+    for user in users:
         text += f"👤 {user['name']} — 💰 ${user['balance']:.2f}\n"
         keyboard.append([InlineKeyboardButton(f"{user['name']} — ${user['balance']:.2f}", callback_data=f"admin_view_user_{user['id']}")])
-    if len(users) > 20:
-        text += f"\n_... و {len(users)-20} أكثر_"
     keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")])
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -2119,6 +2300,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await get_product_input_prompt(update, context)
     elif state == WAITING_ITEM_CONTENT:
         await receive_item_content(update, context)
+    elif state == WAITING_PRODUCT_EDIT_NAME:
+        await get_product_edit_name(update, context)
+    elif state == WAITING_PRODUCT_EDIT_DESC:
+        await get_product_edit_desc(update, context)
+    elif state == WAITING_PRODUCT_EDIT_PRICE:
+        await get_product_edit_price(update, context)
+    elif state == WAITING_PRODUCT_EDIT_PROMPT:
+        await get_product_edit_prompt(update, context)
     elif state == WAITING_PAYMENT_AMOUNT:
         await receive_payment_amount(update, context)
     elif state == WAITING_PURCHASE_QUANTITY:
@@ -2253,6 +2442,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("admin_app_"):     await admin_app_detail(update, context)
     elif data.startswith("admin_del_app_"): await admin_delete_app(update, context)
     elif data.startswith("admin_add_prod_"):await start_add_product(update, context)
+    elif data.startswith("admin_edit_prod_"): await start_edit_product(update, context)
     elif data.startswith("admin_prod_"):
         context.user_data.pop('state', None)
         context.user_data.pop('adding_item_to', None)
