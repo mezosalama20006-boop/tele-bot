@@ -118,6 +118,8 @@ class Database:
             c.execute("ALTER TABLE products ADD COLUMN input_prompt TEXT DEFAULT ''")
         if 'infinite_stock' not in existing_products_columns:
             c.execute("ALTER TABLE products ADD COLUMN infinite_stock INTEGER DEFAULT 0")
+        if 'price_unit' not in existing_products_columns:
+            c.execute("ALTER TABLE products ADD COLUMN price_unit INTEGER DEFAULT NULL")
 
         existing_orders_columns = [row['name'] for row in c.execute("PRAGMA table_info(orders)").fetchall()]
         if 'user_input' not in existing_orders_columns:
@@ -278,12 +280,12 @@ class Database:
 
     # ── PRODUCTS ───────────────────────────────────────────
 
-    def add_product(self, name, description, price, app_id=None, requires_input=0, input_prompt="", infinite_stock=0):
+    def add_product(self, name, description, price, app_id=None, requires_input=0, input_prompt="", infinite_stock=0, price_unit=None):
         conn = self.get_conn()
         c = conn.cursor()
         c.execute(
-            "INSERT INTO products (name, description, price, app_id, requires_input, input_prompt, infinite_stock) VALUES (?,?,?,?,?,?,?)",
-            (name, description, price, app_id, requires_input, input_prompt, infinite_stock)
+            "INSERT INTO products (name, description, price, app_id, requires_input, input_prompt, infinite_stock, price_unit) VALUES (?,?,?,?,?,?,?,?)",
+            (name, description, price, app_id, requires_input, input_prompt, infinite_stock, price_unit)
         )
         pid = c.lastrowid
         conn.commit()
@@ -291,7 +293,7 @@ class Database:
         return pid
 
     def update_product(self, product_id, name=None, description=None, price=None,
-                       requires_input=None, input_prompt=None, infinite_stock=None):
+                       requires_input=None, input_prompt=None, infinite_stock=None, price_unit=None):
         updates = []
         params = []
         if name is not None:
@@ -312,6 +314,9 @@ class Database:
         if infinite_stock is not None:
             updates.append("infinite_stock=?")
             params.append(infinite_stock)
+        if price_unit is not None:
+            updates.append("price_unit=?")
+            params.append(price_unit)
         if not updates:
             return False
         params.append(product_id)
