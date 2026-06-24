@@ -7,3 +7,6 @@ if not os.path.isabs(DATABASE_PATH):
 
 ADMIN_IDS = [6098463726]
 EGP_EXCHANGE_RATE = 55
+PRICE_UNIT = int(os.getenv("PRICE_UNIT", "1000"))
+# Whether to show user balance in EGP alongside USD in UI
+SHOW_BALANCE_EGP = bool(int(os.getenv("SHOW_BALANCE_EGP", "1")))
