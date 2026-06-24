@@ -39,6 +39,7 @@ WAITING_APP_EMOJI           = 11
 WAITING_BROADCAST_MESSAGE   = 12
 WAITING_PURCHASE_QUANTITY   = 13
 WAITING_PRODUCT_TYPE         = 14
+WAITING_PRODUCT_INPUT_PROMPT = 15
 WAITING_PURCHASE_INPUT       = 16
 WAITING_ADMIN_BALANCE_EDIT   = 17
 WAITING_PRODUCT_EDIT_NAME    = 18
@@ -1816,6 +1817,9 @@ async def finalize_product_edit(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ الخدمة غير موجودة.")
         return
     field = context.user_data.get('pending_product_edit_field')
+    if not field:
+        await update.message.reply_text("❌ حدث خطأ في عملية التعديل. حاول مرة أخرى.")
+        return
     name = context.user_data.get('edit_product_name') if field == 'name' else None
     desc = context.user_data.get('edit_product_desc') if field == 'description' else None
     price = context.user_data.get('edit_product_price') if field == 'price' else None
@@ -1824,27 +1828,43 @@ async def finalize_product_edit(update: Update, context: ContextTypes.DEFAULT_TY
         prompt = context.user_data.get('edit_product_prompt', product.get('input_prompt', ''))
         if isinstance(prompt, str) and prompt.lower() == 'skip':
             prompt = product.get('input_prompt', '')
-    db.update_product(
+    updated = db.update_product(
         product_id,
         name=name,
         description=desc,
         price=price,
         input_prompt=prompt if field == 'input_prompt' else None,
     )
+    if not updated:
+        await update.message.reply_text("❌ لم يتم تحديث الخدمة. حاول مرة أخرى.")
+        return
     context.user_data.pop('state', None)
     context.user_data.pop('pending_product_edit_id', None)
     context.user_data.pop('pending_product_edit_app', None)
     context.user_data.pop('pending_product_edit_cat', None)
+    context.user_data.pop('pending_product_edit_field', None)
     context.user_data.pop('edit_product_name', None)
     context.user_data.pop('edit_product_desc', None)
     context.user_data.pop('edit_product_price', None)
     context.user_data.pop('edit_product_prompt', None)
+    confirmation_text = "✅ تم تحديث الخدمة بنجاح.\n\n"
+    if field == 'name':
+        confirmation_text = f"✅ تم تحديث الاسم إلى: {name}\n"
+    elif field == 'description':
+        confirmation_text = "✅ تم تحديث الوصف.\n"
+    elif field == 'price':
+        confirmation_text = f"✅ تم تحديث السعر إلى: ${price:.2f}\n"
+    elif field == 'input_prompt':
+        confirmation_text = "✅ تم تحديث نص الطلب المطلوب من المستخدم.\n"
+
     if update.callback_query:
-        update.callback_query.data = f"admin_prod_{product_id}_{app_id}_{cat_id}"
-        await admin_product_detail(update, context)
+        await update.callback_query.edit_message_text(
+            confirmation_text + f"📦 الخدمة: {product['name']}\n",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("عرض الخدمة", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
+        )
     else:
         await update.message.reply_text(
-            "✅ تم تحديث الخدمة.",
+            confirmation_text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("عرض الخدمة", callback_data=f"admin_prod_{product_id}_{app_id}_{cat_id}")]])
         )
 
