@@ -88,10 +88,8 @@ def parse_deposit_message(text):
 def escape_markdown(text):
     if text is None:
         return ''
-    # keep potential URLs intact while escaping other Markdown chars
-    if re.search(r'https?://\S+|www\.\S+', text):
-        return text.replace('`', '')
-    return re.sub(r'([_\*\[\]\(\)~`>#+\-=|{}\.!])', r'\\\1', text)
+    text = str(text)
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}])', r'\\\1', text)
 
 
 def format_user_input(user_input):
@@ -113,11 +111,12 @@ def main_menu_keyboard(user_id):
     return InlineKeyboardMarkup(keyboard)
 
 async def notify_admin_order(context, user, product_name, quantity, user_input=None, price=None):
+    user_display = f"{escape_markdown(user.first_name)} (@{escape_markdown(user.username or 'N/A')})"
     text = (
         f"🛒 *طلب جديد*\n"
-        f"👤 {user.first_name} (@{user.username or 'N/A'})\n"
+        f"👤 {user_display}\n"
         f"🆔 `{user.id}`\n"
-        f"📦 الخدمة: *{product_name}*\n"
+        f"📦 الخدمة: *{escape_markdown(product_name)}*\n"
         f"🔢 الكمية: *{quantity}*\n"
     )
     if price is not None:
@@ -134,12 +133,13 @@ async def notify_admin_order(context, user, product_name, quantity, user_input=N
             logger.error(f"Failed to notify admin {admin_id}: {e}")
 
 async def notify_admin_speed_request(context, user, purchase_id, product_name, quantity):
+    user_display = f"{escape_markdown(user.first_name)} (@{escape_markdown(user.username or 'N/A')})"
     text = (
         f"🚀 *طلب تسريع جديد*\n"
-        f"👤 {user.first_name} (@{user.username or 'N/A'})\n"
+        f"👤 {user_display}\n"
         f"🆔 `{user.id}`\n"
         f"🔢 الطلب: *#{purchase_id}*\n"
-        f"📦 الخدمة: *{product_name}*\n"
+        f"📦 الخدمة: *{escape_markdown(product_name)}*\n"
         f"🔢 الكمية: *{quantity}*\n"
         f"📌 هذه الخدمة طلبت تسريعًا من المستخدم"
     )
@@ -205,6 +205,7 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"📥 *الطلبات — صفحة {page}*\n━━━━━━━━━━━━━━━━━━\n"
     for o in orders:
         udisplay = f"{o.get('user_name')} (@{o.get('username')})" if o.get('username') else f"{o.get('user_name') or 'N/A'}"
+        udisplay = escape_markdown(udisplay)
         content_preview = ''
         # peek first few item contents
         items = []
@@ -219,12 +220,14 @@ async def admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_input = o.get('user_input') or '_لا يوجد_'
         quantity = o.get('quantity', 1)
         full_title = f"{o.get('category_name', '')} › {o.get('app_name', '')} › {o.get('product_name', '')}"
+        escaped_title = escape_markdown(full_title)
+        escaped_user_input = format_user_input(user_input)
         text += (
-            f"\n🔢 #{o.get('id')} — *{full_title}*\n"
+            f"\n🔢 #{o.get('id')} — *{escaped_title}*\n"
             f"👤 {udisplay} — 🆔 `{o.get('user_id')}`\n"
             f"📅 {o.get('date')} — 📦 الكمية: *{quantity}*\n"
             f"💰 الإجمالي: *${o.get('total_price'):.2f}*\n"
-            f"📎 الرابط/الحساب المرسل: {format_user_input(user_input)}\n"
+            f"📎 الرابط/الحساب المرسل: {escaped_user_input}\n"
         )
         # add action button row per order
         if o.get('status') == 'completed':
@@ -1123,7 +1126,7 @@ async def show_help_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ℹ️ *المساعدة والدعم*\n━━━━━━━━━━━━━━━━━━\n\n"
         "🛍️ *كيف تشتري:*\n1. اذهب للمنتجات\n2. اختر الكاتيجري ثم التطبيق\n3. اختر الخدمة وأكد الشراء\n\n"
         "💰 *كيف تشحن الرصيد:*\n1. اذهب لـ شحن رصيد\n2. أرسل الدفع\n3. ارفع الإيصال\n4. انتظر الموافقة\n\n"
-        "📞 *تواصل مع الدعم:* `@MezoStoreeAdmin`",
+        "📞 *تواصل مع الدعم:* `@MezoStoreBotAdmin`",
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]))
 
